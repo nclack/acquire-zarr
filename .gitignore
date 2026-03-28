@@ -9,6 +9,7 @@ TestResults
 .idea
 .vscode
 .vs
+.claude
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
