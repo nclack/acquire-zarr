@@ -471,7 +471,8 @@ ZarrStream_create(ZarrStreamSettings* settings)
 
         sa->rank = (uint8_t)as->dimension_count;
         sa->dims = shim_convert_dimensions(
-          as->dimensions, as->dimension_count, as->storage_dimension_order);
+          as->dimensions, as->dimension_count, as->storage_dimension_order,
+          as->multiscale);
         if (!sa->dims) {
             goto fail;
         }

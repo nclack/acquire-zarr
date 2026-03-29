@@ -83,7 +83,8 @@ shim_convert_reduce_method(ZarrDownsamplingMethod method)
 struct dimension*
 shim_convert_dimensions(const ZarrDimensionProperties* props,
                         size_t count,
-                        const size_t* storage_dimension_order)
+                        const size_t* storage_dimension_order,
+                        bool multiscale)
 {
     struct dimension* dims = calloc(count, sizeof(struct dimension));
     if (!dims) {
@@ -95,9 +96,12 @@ shim_convert_dimensions(const ZarrDimensionProperties* props,
         dims[i].chunk_size = props[i].chunk_size_px;
         dims[i].chunks_per_shard = props[i].shard_size_chunks;
         dims[i].name = props[i].name;
-        dims[i].downsample = 0;
+        dims[i].downsample =
+          multiscale && props[i].type == ZarrDimensionType_Space;
         dims[i].storage_position = (uint8_t)i;
-        dims[i].axis_type = shim_convert_axis_type(props[i].type);
+        dims[i].ngff.type = shim_convert_axis_type(props[i].type);
+        dims[i].ngff.unit = props[i].unit;
+        dims[i].ngff.scale = props[i].scale;
     }
 
     if (storage_dimension_order) {

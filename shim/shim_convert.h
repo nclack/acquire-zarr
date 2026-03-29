@@ -20,9 +20,11 @@ enum lod_reduce_method
 shim_convert_reduce_method(ZarrDownsamplingMethod method);
 
 // Allocate and convert ZarrDimensionProperties[] to struct dimension[].
+// When multiscale is true, sets downsample=1 on spatial dimensions.
 // Caller owns the returned array (free with free()).
 // Returns NULL on allocation failure.
 struct dimension*
 shim_convert_dimensions(const ZarrDimensionProperties* props,
                         size_t count,
-                        const size_t* storage_dimension_order);
+                        const size_t* storage_dimension_order,
+                        bool multiscale);
