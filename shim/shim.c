@@ -1,4 +1,7 @@
 #include "shim_internal.h"
+#include "shim_convert.h"
+#include "stream.cpu.h"
+#include "writer.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -408,12 +411,132 @@ ZarrStreamSettings_get_array_key(const ZarrStreamSettings* settings,
     return ZarrStatusCode_NotYetImplemented;
 }
 
-/* --- Stream lifecycle (stubs) ------------------------------------------- */
+/* --- Stream lifecycle ---------------------------------------------------- */
+
+static void
+shim_array_destroy(struct shim_array* a)
+{
+    if (!a) {
+        return;
+    }
+    if (a->stream) {
+        struct writer* w = tile_stream_cpu_writer(a->stream);
+        if (w) {
+            writer_flush(w);
+        }
+        tile_stream_cpu_destroy(a->stream);
+        a->stream = NULL;
+    }
+    shim_sink_flush(&a->sink);
+    shim_sink_destroy(&a->sink);
+    free(a->dims);
+    a->dims = NULL;
+    free(a->key);
+    a->key = NULL;
+}
 
 ZarrStream*
 ZarrStream_create(ZarrStreamSettings* settings)
 {
-    (void)settings;
+    if (!settings || !settings->store_path || !settings->arrays) {
+        return NULL;
+    }
+
+    ZarrStream* stream = calloc(1, sizeof(ZarrStream));
+    if (!stream) {
+        return NULL;
+    }
+
+    stream->store_path = strdup(settings->store_path);
+    if (!stream->store_path) {
+        free(stream);
+        return NULL;
+    }
+
+    stream->n_arrays = settings->array_count;
+    stream->arrays = calloc(stream->n_arrays, sizeof(struct shim_array));
+    if (!stream->arrays) {
+        free(stream->store_path);
+        free(stream);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < stream->n_arrays; ++i) {
+        const ZarrArraySettings* as = &settings->arrays[i];
+        struct shim_array* sa = &stream->arrays[i];
+
+        if (as->output_key) {
+            sa->key = strdup(as->output_key);
+        }
+
+        sa->rank = (uint8_t)as->dimension_count;
+        sa->dims = shim_convert_dimensions(
+          as->dimensions, as->dimension_count, as->storage_dimension_order);
+        if (!sa->dims) {
+            goto fail;
+        }
+
+        enum dtype dt = shim_convert_dtype(as->data_type);
+        enum compression_codec codec =
+          shim_convert_codec(as->compression_settings);
+
+        // Frame = the two fastest (innermost) dimensions * bpe
+        size_t ndims = as->dimension_count;
+        sa->frame_bytes = dtype_bpe(dt) *
+                          as->dimensions[ndims - 2].array_size_px *
+                          as->dimensions[ndims - 1].array_size_px;
+
+        // Always use multiscale sink for OME-NGFF compat.
+        // nlod=1 for single scale, 0 (auto) for multiscale.
+        struct zarr_multiscale_config ms_cfg = {
+            .store_path = settings->store_path,
+            .array_name = as->output_key,
+            .data_type = dt,
+            .fill_value = 0.0,
+            .rank = sa->rank,
+            .dimensions = sa->dims,
+            .nlod = as->multiscale ? 0 : 1,
+            .unbuffered = 0,
+            .codec = codec,
+        };
+
+        sa->sink.kind = SHIM_SINK_FS_MULTISCALE;
+        sa->sink.fs_ms = zarr_fs_multiscale_sink_create(&ms_cfg);
+        if (!sa->sink.fs_ms) {
+            goto fail;
+        }
+
+        struct shard_sink* ss = shim_sink_as_shard_sink(&sa->sink);
+        if (!ss) {
+            goto fail;
+        }
+
+        struct tile_stream_configuration cfg = {
+            .buffer_capacity_bytes = sa->frame_bytes,
+            .dtype = dt,
+            .rank = sa->rank,
+            .dimensions = sa->dims,
+            .codec = codec,
+            .reduce_method =
+              shim_convert_reduce_method(as->downsampling_method),
+            .append_reduce_method =
+              shim_convert_reduce_method(as->downsampling_method),
+            .epochs_per_batch = 0,
+            .target_batch_chunks = 0,
+            .metadata_update_interval_s = 1.0f,
+            .shard_alignment = 0,
+        };
+
+        sa->stream = tile_stream_cpu_create(&cfg, ss);
+        if (!sa->stream) {
+            goto fail;
+        }
+    }
+
+    return stream;
+
+fail:
+    ZarrStream_destroy(stream);
     return NULL;
 }
 
@@ -422,6 +545,12 @@ ZarrStream_destroy(ZarrStream* stream)
 {
     if (!stream) {
         return;
+    }
+    if (stream->arrays) {
+        for (size_t i = 0; i < stream->n_arrays; ++i) {
+            shim_array_destroy(&stream->arrays[i]);
+        }
+        free(stream->arrays);
     }
     free(stream->store_path);
     free(stream);
@@ -434,12 +563,61 @@ ZarrStream_append(ZarrStream* stream,
                   size_t* bytes_out,
                   const char* key)
 {
-    (void)stream;
-    (void)data;
-    (void)bytes_in;
-    (void)bytes_out;
-    (void)key;
-    return ZarrStatusCode_NotYetImplemented;
+    if (!stream || !data || !bytes_out) {
+        return ZarrStatusCode_InvalidArgument;
+    }
+
+    *bytes_out = 0;
+
+    if (bytes_in == 0) {
+        return ZarrStatusCode_Success;
+    }
+
+    // Find the target array
+    struct shim_array* sa = NULL;
+    if (!key && stream->n_arrays == 1) {
+        sa = &stream->arrays[0];
+    } else if (key) {
+        for (size_t i = 0; i < stream->n_arrays; ++i) {
+            if (stream->arrays[i].key &&
+                strcmp(stream->arrays[i].key, key) == 0) {
+                sa = &stream->arrays[i];
+                break;
+            }
+        }
+        // If key didn't match any named array and there's exactly one with
+        // no key, use that
+        if (!sa && stream->n_arrays == 1 && !stream->arrays[0].key) {
+            sa = &stream->arrays[0];
+        }
+    }
+
+    if (!sa) {
+        return ZarrStatusCode_InvalidArgument;
+    }
+
+    struct writer* w = tile_stream_cpu_writer(sa->stream);
+    if (!w) {
+        return ZarrStatusCode_InternalError;
+    }
+
+    struct slice s = { .beg = data,
+                       .end = (const char*)data + bytes_in };
+    struct writer_result r = writer_append_wait(w, s);
+
+    if (r.error == writer_error_fail) {
+        return ZarrStatusCode_InternalError;
+    }
+
+    size_t consumed =
+      (size_t)((const char*)r.rest.beg - (const char*)data);
+    // If writer consumed everything, rest.beg == rest.end (both NULL or at end)
+    if (!r.rest.beg) {
+        consumed = bytes_in;
+    }
+    *bytes_out = consumed;
+
+    return ZarrStatusCode_Success;
 }
 
 ZarrStatusCode
@@ -456,7 +634,9 @@ ZarrStream_write_custom_metadata(ZarrStream* stream,
 ZarrStatusCode
 ZarrStream_get_current_memory_usage(const ZarrStream* stream, size_t* usage)
 {
-    (void)stream;
-    (void)usage;
-    return ZarrStatusCode_NotYetImplemented;
+    if (!stream || !usage) {
+        return ZarrStatusCode_InvalidArgument;
+    }
+    *usage = stream->estimated_memory;
+    return ZarrStatusCode_Success;
 }
