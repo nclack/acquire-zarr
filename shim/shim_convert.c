@@ -40,8 +40,10 @@ shim_convert_codec(const ZarrCompressionSettings* settings)
     }
     switch (settings->codec) {
         case ZarrCompressionCodec_BloscLZ4:
+        case ZarrCompressionCodec_Lz4:
             return CODEC_LZ4;
         case ZarrCompressionCodec_BloscZstd:
+        case ZarrCompressionCodec_Zstd:
             return CODEC_ZSTD;
         default:
             return CODEC_NONE;

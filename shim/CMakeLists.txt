@@ -65,6 +65,8 @@ if(nlohmann_json_FOUND)
         stream-raw-to-filesystem
         stream-named-array-to-filesystem
         stream-compressed-to-filesystem
+        stream-zstd-compressed-to-filesystem
+        stream-lz4-compressed-to-filesystem
         stream-2d-multiscale-to-filesystem
         stream-3d-multiscale-to-filesystem
         stream-multi-frame-append
@@ -74,6 +76,7 @@ if(nlohmann_json_FOUND)
         stream-pure-hcs-acquisition
         stream-mixed-flat-and-hcs-acquisition
         stream-with-ragged-final-shard
+        stream-append-nullptr
     )
 
     # S3 tests depend on miniocpp/client.h from the original acquire-zarr build.
