@@ -76,8 +76,8 @@ if(nlohmann_json_FOUND)
         stream-pure-hcs-acquisition
         stream-mixed-flat-and-hcs-acquisition
         stream-with-ragged-final-shard
-        stream-append-nullptr
     )
+    # Excluded: stream-append-nullptr (depends on miniocpp)
 
     # S3 tests depend on miniocpp/client.h from the original acquire-zarr build.
     # Excluded until the shim's S3 path is implemented and tests are adapted.
