@@ -4,6 +4,8 @@ struct shard_sink*
 shim_sink_as_shard_sink(struct shim_sink* s)
 {
     switch (s->kind) {
+        case SHIM_SINK_FS:
+            return zarr_fs_sink_as_shard_sink(s->fs);
         case SHIM_SINK_FS_MULTISCALE:
             return zarr_fs_multiscale_sink_as_shard_sink(s->fs_ms);
     }
@@ -14,6 +16,9 @@ void
 shim_sink_flush(struct shim_sink* s)
 {
     switch (s->kind) {
+        case SHIM_SINK_FS:
+            zarr_fs_sink_flush(s->fs);
+            break;
         case SHIM_SINK_FS_MULTISCALE:
             zarr_fs_multiscale_sink_flush(s->fs_ms);
             break;
@@ -24,6 +29,10 @@ void
 shim_sink_destroy(struct shim_sink* s)
 {
     switch (s->kind) {
+        case SHIM_SINK_FS:
+            zarr_fs_sink_destroy(s->fs);
+            s->fs = NULL;
+            break;
         case SHIM_SINK_FS_MULTISCALE:
             zarr_fs_multiscale_sink_destroy(s->fs_ms);
             s->fs_ms = NULL;

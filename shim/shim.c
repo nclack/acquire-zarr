@@ -57,11 +57,17 @@ Zarr_get_status_message(ZarrStatusCode code)
         case ZarrStatusCode_IOError:
             return "I/O error";
         case ZarrStatusCode_CompressionError:
-            return "Compression error";
+            return "Error compressing";
         case ZarrStatusCode_InvalidSettings:
             return "Invalid settings";
         case ZarrStatusCode_WillNotOverwrite:
-            return "Will not overwrite existing data";
+            return "Refusing to overwrite existing data";
+        case ZarrStatusCode_PartialWrite:
+            return "Data partially written";
+        case ZarrStatusCode_WriteOutOfBounds:
+            return "Attempted write beyond array boundary";
+        case ZarrStatusCode_KeyNotFound:
+            return "Array key not found";
         default:
             return "Unknown error";
     }
@@ -114,7 +120,7 @@ ZarrArraySettings_create_dimension_array(ZarrArraySettings* settings,
     if (!settings) {
         return ZarrStatusCode_InvalidArgument;
     }
-    if (dimension_count < 3) {
+    if (dimension_count < 2) {
         return ZarrStatusCode_InvalidArgument;
     }
 
@@ -487,24 +493,39 @@ ZarrStream_create(ZarrStreamSettings* settings)
                           as->dimensions[ndims - 2].array_size_px *
                           as->dimensions[ndims - 1].array_size_px;
 
-        // Always use multiscale sink for OME-NGFF compat.
-        // nlod=1 for single scale, 0 (auto) for multiscale.
-        struct zarr_multiscale_config ms_cfg = {
-            .store_path = settings->store_path,
-            .array_name = as->output_key,
-            .data_type = dt,
-            .fill_value = 0.0,
-            .rank = sa->rank,
-            .dimensions = sa->dims,
-            .nlod = as->multiscale ? 0 : 1,
-            .unbuffered = 0,
-            .codec = codec,
-        };
-
-        sa->sink.kind = SHIM_SINK_FS_MULTISCALE;
-        sa->sink.fs_ms = zarr_fs_multiscale_sink_create(&ms_cfg);
-        if (!sa->sink.fs_ms) {
-            goto fail;
+        if (as->multiscale) {
+            struct zarr_multiscale_config ms_cfg = {
+                .store_path = settings->store_path,
+                .array_name = as->output_key,
+                .data_type = dt,
+                .fill_value = 0.0,
+                .rank = sa->rank,
+                .dimensions = sa->dims,
+                .nlod = 0,
+                .unbuffered = 0,
+                .codec = codec,
+            };
+            sa->sink.kind = SHIM_SINK_FS_MULTISCALE;
+            sa->sink.fs_ms = zarr_fs_multiscale_sink_create(&ms_cfg);
+            if (!sa->sink.fs_ms) {
+                goto fail;
+            }
+        } else {
+            struct zarr_config fs_cfg = {
+                .store_path = settings->store_path,
+                .array_name = as->output_key,
+                .data_type = dt,
+                .fill_value = 0.0,
+                .rank = sa->rank,
+                .dimensions = sa->dims,
+                .unbuffered = 0,
+                .codec = codec,
+            };
+            sa->sink.kind = SHIM_SINK_FS;
+            sa->sink.fs = zarr_fs_sink_create(&fs_cfg);
+            if (!sa->sink.fs) {
+                goto fail;
+            }
         }
 
         struct shard_sink* ss = shim_sink_as_shard_sink(&sa->sink);
@@ -564,7 +585,7 @@ ZarrStream_append(ZarrStream* stream,
                   size_t* bytes_out,
                   const char* key)
 {
-    if (!stream || !data || !bytes_out) {
+    if (!stream || !bytes_out) {
         return ZarrStatusCode_InvalidArgument;
     }
 
