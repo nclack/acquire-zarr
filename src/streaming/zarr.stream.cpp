@@ -8,6 +8,7 @@
 #include <blosc.h>
 
 #include <bit> // bit_ceil
+#include <climits>
 #include <filesystem>
 #include <regex>
 #include <stack>
@@ -108,22 +109,74 @@ validate_compression_settings(const ZarrCompressionSettings* settings,
         return false;
     }
 
-    if (settings->level > 9) {
-        error =
-          "Invalid compression level: " + std::to_string(settings->level) +
-          ". Must be between 0 and 9";
-        return false;
-    }
-
-    if (settings->shuffle != BLOSC_NOSHUFFLE &&
-        settings->shuffle != BLOSC_SHUFFLE &&
-        settings->shuffle != BLOSC_BITSHUFFLE) {
-        error = "Invalid shuffle: " + std::to_string(settings->shuffle) +
-                ". Must be " + std::to_string(BLOSC_NOSHUFFLE) +
-                " (no shuffle), " + std::to_string(BLOSC_SHUFFLE) +
-                " (byte  shuffle), or " + std::to_string(BLOSC_BITSHUFFLE) +
-                " (bit shuffle)";
-        return false;
+    // validate compressor/codec compatibility and per-compressor constraints
+    switch (settings->compressor) {
+        case ZarrCompressor_Blosc1:
+            if (settings->codec != ZarrCompressionCodec_BloscLZ4 &&
+                settings->codec != ZarrCompressionCodec_BloscZstd) {
+                error =
+                  "Blosc1 compressor requires BloscLZ4 or BloscZstd codec";
+                return false;
+            }
+            if (settings->level > 9) {
+                error =
+                  "Invalid compression level: " +
+                  std::to_string(settings->level) +
+                  ". Blosc supports levels 0-9";
+                return false;
+            }
+            if (settings->shuffle != BLOSC_NOSHUFFLE &&
+                settings->shuffle != BLOSC_SHUFFLE &&
+                settings->shuffle != BLOSC_BITSHUFFLE) {
+                error =
+                  "Invalid shuffle: " + std::to_string(settings->shuffle) +
+                  ". Must be " + std::to_string(BLOSC_NOSHUFFLE) +
+                  " (no shuffle), " + std::to_string(BLOSC_SHUFFLE) +
+                  " (byte shuffle), or " + std::to_string(BLOSC_BITSHUFFLE) +
+                  " (bit shuffle)";
+                return false;
+            }
+            break;
+        case ZarrCompressor_Zstd:
+            if (settings->codec != ZarrCompressionCodec_Zstd) {
+                error = "Zstd compressor requires Zstd codec";
+                return false;
+            }
+            if (settings->level > 22) {
+                error =
+                  "Invalid compression level: " +
+                  std::to_string(settings->level) +
+                  ". Zstd supports levels 0-22";
+                return false;
+            }
+            if (settings->shuffle != 0) {
+                error = "Shuffle is not supported with stock zstd compression";
+                return false;
+            }
+            break;
+        case ZarrCompressor_Lz4:
+            if (settings->codec != ZarrCompressionCodec_Lz4) {
+                error = "Lz4 compressor requires Lz4 codec";
+                return false;
+            }
+            if (settings->level > 12) {
+                error =
+                  "Invalid compression level: " +
+                  std::to_string(settings->level) +
+                  ". LZ4 supports levels 0-12";
+                return false;
+            }
+            if (settings->shuffle != 0) {
+                error = "Shuffle is not supported with stock lz4 compression";
+                return false;
+            }
+            break;
+        case ZarrCompressor_None:
+            break;
+        default:
+            error =
+              "Invalid compressor: " + std::to_string(settings->compressor);
+            return false;
     }
 
     return true;
@@ -151,17 +204,26 @@ validate_custom_metadata(std::string_view metadata)
     return true;
 }
 
-std::optional<zarr::BloscCompressionParams>
+std::optional<zarr::CompressionParams>
 make_compression_params(const ZarrCompressionSettings* settings)
 {
-    if (!settings) {
+    if (!settings || settings->compressor == ZarrCompressor_None) {
         return std::nullopt;
     }
 
-    return zarr::BloscCompressionParams(
-      zarr::blosc_codec_to_string(settings->codec),
-      settings->level,
-      settings->shuffle);
+    switch (settings->compressor) {
+        case ZarrCompressor_Blosc1:
+            return zarr::BloscCompressionParams(
+              zarr::blosc_codec_to_string(settings->codec),
+              settings->level,
+              settings->shuffle);
+        case ZarrCompressor_Zstd:
+            return zarr::ZstdCompressionParams{ settings->level };
+        case ZarrCompressor_Lz4:
+            return zarr::Lz4CompressionParams{ settings->level };
+        default:
+            return std::nullopt;
+    }
 }
 
 std::shared_ptr<ArrayDimensions>
@@ -286,7 +348,8 @@ make_array_config(const ZarrArraySettings* settings,
                   const std::string& store_root,
                   const std::string& parent_path,
                   std::optional<std::string> array_key,
-                  const std::optional<std::string>& bucket_name, std::string& error)
+                  const std::optional<std::string>& bucket_name,
+                  std::string& error)
 {
     // remove leading/trailing slashes and whitespace
     std::string key = zarr::regularize_key(settings->output_key);
@@ -301,11 +364,23 @@ make_array_config(const ZarrArraySettings* settings,
         return nullptr;
     }
 
-    std::optional<zarr::BloscCompressionParams> compression_params =
+    std::optional<zarr::CompressionParams> compression_params =
       make_compression_params(settings->compression_settings);
 
     std::shared_ptr<ArrayDimensions> dimensions =
       make_array_dimensions(settings);
+
+    // LZ4 API uses int for sizes — reject chunks that would overflow
+    if (settings->compression_settings &&
+        settings->compression_settings->compressor == ZarrCompressor_Lz4) {
+        const size_t chunk_bytes = dimensions->bytes_per_chunk();
+        if (chunk_bytes > static_cast<size_t>(INT_MAX)) {
+            error = "Chunk size (" + std::to_string(chunk_bytes) +
+                    " bytes) exceeds LZ4 maximum (" +
+                    std::to_string(INT_MAX) + " bytes)";
+            return nullptr;
+        }
+    }
 
     std::optional<ZarrDownsamplingMethod> downsampling_method = std::nullopt;
     if (settings->multiscale) {
@@ -389,11 +464,11 @@ validate_array_settings(const ZarrArraySettings* settings,
         return false;
     }
 
-    // we must have at least 3 dimensions
+    // we must have at least 2 dimensions
     const size_t ndims = settings->dimension_count;
-    if (ndims < 3) {
+    if (ndims < 2) {
         error = "Invalid number of dimensions: " + std::to_string(ndims) +
-                ". Must be at least 3";
+                ". Must be at least 2";
         return false;
     }
 
@@ -841,10 +916,18 @@ ZarrStream::ZarrStream_s(struct ZarrStreamSettings_s* settings)
     EXPECT(init_frame_queue_(), error_);
 }
 
-size_t
-ZarrStream::append(const char* key_, const void* data_, size_t nbytes)
+ZarrStatusCode
+ZarrStream::append(const char* key_,
+                   const void* data_,
+                   size_t bytes_in,
+                   size_t& bytes_out)
 {
-    EXPECT(error_.empty(), "Cannot append data: ", error_.c_str());
+    if (!error_.empty()) {
+        LOG_ERROR("Cannot append data: ", error_);
+        return ZarrStatusCode_InternalError;
+    }
+
+    bytes_out = 0; // bytes written out of the input data
 
     // if the key is null and we have only one output array, use that
     std::string key;
@@ -854,37 +937,49 @@ ZarrStream::append(const char* key_, const void* data_, size_t nbytes)
         key = zarr::regularize_key(key_);
     }
 
-    auto it = output_arrays_.find(key);
-    EXPECT(it != output_arrays_.end(),
-           "Cannot append data: array at '",
-           key,
-           "' not found");
-    EXPECT(data_ != nullptr, "Cannot append data: data pointer is null");
-
-    if (nbytes == 0) {
-        return 0;
+    const auto array_it = output_arrays_.find(key);
+    if (array_it == output_arrays_.end()) {
+        return ZarrStatusCode_KeyNotFound;
     }
 
-    auto& output = it->second;
+    if (bytes_in == 0) {
+        LOG_INFO("Skipping append to array '", key, "': no data");
+        return ZarrStatusCode_Success;
+    }
+
+    auto& output = array_it->second;
+    if (output.max_bytes > 0 &&
+        output.bytes_written + bytes_in > output.max_bytes) {
+        LOG_ERROR("Incoming byte count ",
+                  bytes_in,
+                  " will overflow array (bytes written: ",
+                  output.bytes_written,
+                  ", maximum bytes: ",
+                  output.max_bytes,
+                  ")");
+        return ZarrStatusCode_WriteOutOfBounds;
+    }
     auto& frame_buffer = output.frame_buffer;
     auto& frame_buffer_offset = output.frame_buffer_offset;
 
-    auto* data = static_cast<const uint8_t*>(data_);
+    auto* data = data_ ? static_cast<const uint8_t*>(data_) : nullptr;
 
     const size_t bytes_of_frame = frame_buffer.size();
-    size_t bytes_written = 0; // bytes written out of the input data
 
-    while (bytes_written < nbytes) {
-        const size_t bytes_remaining = nbytes - bytes_written;
+    while (bytes_out < bytes_in) {
+        const size_t bytes_remaining = bytes_in - bytes_out;
 
         if (frame_buffer_offset > 0) { // add to / finish a partial frame
             const size_t bytes_to_copy =
               std::min(bytes_of_frame - frame_buffer_offset, bytes_remaining);
 
-            frame_buffer.assign_at(frame_buffer_offset,
-                                   { data + bytes_written, bytes_to_copy });
+            const auto subspan =
+              data ? std::span{ data + bytes_out, bytes_to_copy }
+                   : std::span{ static_cast<const uint8_t*>(nullptr),
+                                bytes_to_copy };
+            frame_buffer.assign_at(frame_buffer_offset, subspan);
             frame_buffer_offset += bytes_to_copy;
-            bytes_written += bytes_to_copy;
+            bytes_out += bytes_to_copy;
 
             // ready to enqueue the frame buffer
             if (frame_buffer_offset == bytes_of_frame) {
@@ -901,13 +996,13 @@ ZarrStream::append(const char* key_, const void* data_, size_t nbytes)
                     LOG_DEBUG("Stopping frame processing");
                     break;
                 }
-                data += bytes_to_copy;
+                data = data ? data + bytes_to_copy : data;
                 frame_buffer_offset = 0;
             }
         } else if (bytes_remaining < bytes_of_frame) { // begin partial frame
             frame_buffer.assign_at(0, { data, bytes_remaining });
             frame_buffer_offset = bytes_remaining;
-            bytes_written += bytes_remaining;
+            bytes_out += bytes_remaining;
         } else { // at least one full frame
             zarr::LockedBuffer frame;
             frame.assign({ data, bytes_of_frame });
@@ -924,12 +1019,17 @@ ZarrStream::append(const char* key_, const void* data_, size_t nbytes)
                 break;
             }
 
-            bytes_written += bytes_of_frame;
-            data += bytes_of_frame;
+            bytes_out += bytes_of_frame;
+            data = data ? data + bytes_of_frame : data;
         }
     }
+    output.bytes_written += bytes_out;
 
-    return bytes_written;
+    CHECK(bytes_out <= bytes_in);
+    if (bytes_out < bytes_in) {
+        return ZarrStatusCode_PartialWrite;
+    }
+    return ZarrStatusCode_Success;
 }
 
 ZarrStatusCode
@@ -1054,8 +1154,12 @@ ZarrStream_s::validate_settings_(const struct ZarrStreamSettings_s* settings)
     std::vector<std::shared_ptr<zarr::ArrayConfig>> arrays(
       settings->array_count);
     for (auto i = 0; i < settings->array_count; ++i) {
-        auto config = make_array_config(
-          settings->arrays + i, store_path, "", std::nullopt, std::nullopt, error_);
+        auto config = make_array_config(settings->arrays + i,
+                                        store_path,
+                                        "",
+                                        std::nullopt,
+                                        std::nullopt,
+                                        error_);
         if (!config) {
             return false;
         }
@@ -1135,7 +1239,8 @@ ZarrStream_s::validate_settings_(const struct ZarrStreamSettings_s* settings)
                                                     store_path,
                                                     parent_path,
                                                     field.path,
-                                                    std::nullopt, error_);
+                                                    std::nullopt,
+                                                    error_);
                     if (config == nullptr) {
                         return false;
                     }
@@ -1164,13 +1269,16 @@ ZarrStream_s::configure_array_(const ZarrArraySettings* settings,
     }
 
     auto config = make_array_config(
-        settings, store_path_, parent_path, std::nullopt, bucket_name, error_);
+      settings, store_path_, parent_path, std::nullopt, bucket_name, error_);
     if (config == nullptr) {
         return false;
     }
 
-    ZarrOutputArray output_node{ .output_key = config->node_key,
-                                 .frame_buffer_offset = 0 };
+    ZarrOutputArray output_node{
+        .output_key = config->node_key,
+        .frame_buffer_offset = 0,
+        .bytes_written = 0,
+    };
     try {
         output_node.array = zarr::make_array(config,
                                              thread_pool_,
@@ -1185,6 +1293,8 @@ ZarrStream_s::configure_array_(const ZarrArraySettings* settings,
         set_error_("Failed to create output node: " + error_);
         return false;
     }
+
+    output_node.max_bytes = output_node.array->max_bytes();
 
     // initialize frame buffer
     const auto& dims = config->dimensions;
@@ -1595,7 +1705,11 @@ ZarrStream_s::process_frame_queue_()
         } else {
             auto& output_node = it->second;
 
-            if (output_node.array->write_frame(frame) != frame.size()) {
+            size_t n_bytes;
+            if (const auto result =
+                  output_node.array->write_frame(frame, n_bytes);
+                result != zarr::WriteResult::Ok) {
+                // TODO (aliddell): retry on WriteResult::PartialWrite
                 set_error_("Failed to write frame to writer for key: " +
                            output_key);
                 std::unique_lock lock(frame_queue_mutex_);

@@ -4,7 +4,7 @@
 #include "thread.pool.hh"
 #include "array.dimensions.hh"
 #include "definitions.hh"
-#include "blosc.compression.params.hh"
+#include "compression.params.hh"
 
 namespace zarr {
 /**
@@ -85,6 +85,24 @@ bool
 compress_in_place(ByteVector& data,
                   const BloscCompressionParams& params,
                   size_t type_size);
+
+/**
+ * @brief Compress @p data in place using stock zstd.
+ * @param data The buffer to compress.
+ * @param params Compression parameters.
+ * @return true if compression was successful, false otherwise.
+ */
+bool
+compress_in_place(ByteVector& data, const ZstdCompressionParams& params);
+
+/**
+ * @brief Compress @p data in place using stock lz4.
+ * @param data The buffer to compress.
+ * @param params Compression parameters.
+ * @return true if compression was successful, false otherwise.
+ */
+bool
+compress_in_place(ByteVector& data, const Lz4CompressionParams& params);
 
 /**
  * @brief Regularize a Zarr key by removing leading, trailing, and consecutive

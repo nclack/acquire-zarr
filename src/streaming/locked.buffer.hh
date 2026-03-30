@@ -1,6 +1,6 @@
 #pragma once
 
-#include "blosc.compression.params.hh"
+#include "compression.params.hh"
 #include "definitions.hh"
 
 #include <mutex>
@@ -65,8 +65,8 @@ class LockedBuffer
     /**
      * @brief Assign new data to the buffer at offset @p offset, replacing
      * existing data.
-     * @param offset
-     * @param data
+     * @param offset Starting position in the buffer.
+     * @param data Data to copy into the buffer. If the underlying
      */
     void assign_at(size_t offset, ConstByteSpan data);
 
@@ -88,12 +88,24 @@ class LockedBuffer
     std::vector<uint8_t> take();
 
     /**
-     * @brief Compress the buffer in place using Blosc with the given parameters.
+     * @brief Compress the buffer in place using Blosc with the given
+     * parameters.
      * @param params Compression parameters.
-     * @param type_size Size of the data type being compressed (e.g., 1 for uint8, 2 for uint16).
+     * @param type_size Size of the data type being compressed (e.g., 1 for
+     * uint8, 2 for uint16).
      * @return true if compression was successful, false otherwise.
      */
     [[nodiscard]] bool compress(const zarr::BloscCompressionParams& params,
                                 size_t type_size);
+
+    /**
+     * @brief Compress the buffer in place using stock zstd.
+     */
+    [[nodiscard]] bool compress(const zarr::ZstdCompressionParams& params);
+
+    /**
+     * @brief Compress the buffer in place using stock lz4.
+     */
+    [[nodiscard]] bool compress(const zarr::Lz4CompressionParams& params);
 };
 } // namespace zarr

@@ -39,6 +39,8 @@ zarr::MultiscaleArray::MultiscaleArray(
     if (config_->dimensions) {
         CHECK(create_arrays_());
     }
+
+    EXPECT(!arrays_.empty(), "No Arrays created!");
 }
 
 size_t
@@ -52,28 +54,26 @@ zarr::MultiscaleArray::memory_usage() const noexcept
     return total;
 }
 
-size_t
-zarr::MultiscaleArray::write_frame(LockedBuffer& data)
+zarr::WriteResult
+zarr::MultiscaleArray::write_frame(LockedBuffer& data, size_t& bytes_written)
 {
-    if (arrays_.empty()) {
-        LOG_WARNING("Attempt to write to group with no arrays");
-        return 0;
-    }
+    bytes_written = 0;
 
-    const auto n_bytes = arrays_[0]->write_frame(data);
-    EXPECT(n_bytes == bytes_per_frame_,
-           "Expected to write ",
-           bytes_per_frame_,
-           " bytes, wrote ",
-           n_bytes);
-
-    if (n_bytes != data.size()) {
-        LOG_ERROR("Incomplete write to full-resolution array");
-        return n_bytes;
+    size_t n_bytes;
+    if (const auto result = arrays_[0]->write_frame(data, n_bytes);
+        result != WriteResult::Ok) {
+        LOG_ERROR("Failed to write data to full-resolution array.");
+        return result;
     }
 
     write_multiscale_frames_(data);
-    return n_bytes;
+    return WriteResult::Ok;
+}
+
+size_t
+zarr::MultiscaleArray::max_bytes() const
+{
+    return arrays_[0]->max_bytes();
 }
 
 std::vector<std::string>
@@ -187,9 +187,12 @@ zarr::MultiscaleArray::make_multiscales_metadata_() const
 {
     nlohmann::json multiscales;
     const auto ndims = config_->dimensions->ndims();
+    // For 2D arrays, skip the phantom singleton dimension in metadata
+    const size_t start_dim = config_->dimensions->is_2d() ? 1 : 0;
+    const size_t visible_ndims = ndims - start_dim;
 
     auto& axes = multiscales[0]["axes"];
-    for (auto i = 0; i < ndims; ++i) {
+    for (auto i = start_dim; i < ndims; ++i) {
         const auto& dim = config_->dimensions->at(i);
         const auto type = dimension_type_to_string(dim.type);
         const std::string unit = dim.unit.has_value() ? *dim.unit : "";
@@ -206,10 +209,10 @@ zarr::MultiscaleArray::make_multiscales_metadata_() const
     }
 
     // spatial multiscale metadata
-    std::vector<double> scales(ndims);
-    for (auto i = 0; i < ndims; ++i) {
+    std::vector<double> scales(visible_ndims);
+    for (auto i = start_dim; i < ndims; ++i) {
         const auto& dim = config_->dimensions->at(i);
-        scales[i] = dim.scale;
+        scales[i - start_dim] = dim.scale;
     }
 
     multiscales[0]["datasets"] = {
@@ -231,7 +234,7 @@ zarr::MultiscaleArray::make_multiscales_metadata_() const
     for (auto i = 1; i < arrays_.size(); ++i) {
         const auto& config = downsampler_->writer_configurations().at(i);
 
-        for (auto j = 0; j < ndims; ++j) {
+        for (auto j = start_dim; j < ndims; ++j) {
             const auto& base_dim = base_dims->at(j);
             const auto& down_dim = config->dimensions->at(j);
             if (base_dim.type != ZarrDimensionType_Space) {
@@ -243,7 +246,7 @@ zarr::MultiscaleArray::make_multiscales_metadata_() const
             const auto ratio = (base_size + down_size - 1) / down_size;
 
             // scale by next power of 2
-            scales[j] = base_dim.scale * std::bit_ceil(ratio);
+            scales[j - start_dim] = base_dim.scale * std::bit_ceil(ratio);
         }
 
         multiscales[0]["datasets"].push_back({
@@ -278,19 +281,28 @@ zarr::MultiscaleArray::make_base_array_config_() const
                                          0);
 }
 
-void
-zarr::MultiscaleArray::write_multiscale_frames_(LockedBuffer& data)
+zarr::WriteResult
+zarr::MultiscaleArray::write_multiscale_frames_(LockedBuffer& data) const
 {
     if (!downsampler_) {
-        return; // no downsampler, nothing to do
+        return WriteResult::Ok; // no downsampler, nothing to do
     }
 
     downsampler_->add_frame(data);
 
     for (auto i = 1; i < arrays_.size(); ++i) {
-        LockedBuffer downsampled_frame;
-        if (downsampler_->take_frame(i, downsampled_frame)) {
-            const auto n_bytes = arrays_[i]->write_frame(downsampled_frame);
+        if (LockedBuffer downsampled_frame;
+            downsampler_->take_frame(i, downsampled_frame)) {
+
+            size_t n_bytes;
+            if (const auto result =
+                  arrays_[i]->write_frame(downsampled_frame, n_bytes);
+                result != WriteResult::Ok) {
+                LOG_ERROR("Failed to write frame to LOD ", i);
+                return result;
+            }
+
+            // TODO (aliddell: retry on partial write)
             EXPECT(n_bytes == downsampled_frame.size(),
                    "Expected to write ",
                    downsampled_frame.size(),
@@ -300,4 +312,6 @@ zarr::MultiscaleArray::write_multiscale_frames_(LockedBuffer& data)
                    n_bytes);
         }
     }
+
+    return WriteResult::Ok;
 }

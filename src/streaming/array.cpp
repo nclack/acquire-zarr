@@ -67,11 +67,13 @@ zarr::Array::Array(std::shared_ptr<ArrayConfig> config,
                    std::shared_ptr<FileHandlePool> file_handle_pool,
                    std::shared_ptr<S3ConnectionPool> s3_connection_pool)
   : ArrayBase(config, thread_pool, file_handle_pool, s3_connection_pool)
+  , max_bytes_(config->dimensions->max_byte_count())
+  , bytes_per_frame_(bytes_of_frame(*config->dimensions, config->dtype))
+  , total_bytes_written_{ 0 }
   , bytes_to_flush_{ 0 }
-  , frames_written_{ 0 }
   , append_chunk_index_{ 0 }
-  , current_layer_{ 0 }
   , is_closing_{ false }
+  , current_layer_{ 0 }
 {
     const size_t n_chunks = config_->dimensions->number_of_chunks_in_memory();
     EXPECT(n_chunks > 0, "Array has zero chunks in memory");
@@ -89,7 +91,12 @@ zarr::Array::Array(std::shared_ptr<ArrayConfig> config,
         std::ranges::fill(table, std::numeric_limits<uint64_t>::max());
     }
 
-    data_root_ = node_path_() + "/c/" + std::to_string(append_chunk_index_);
+    // For 2D arrays, don't include append_chunk_index in the path
+    if (config_->dimensions->is_2d()) {
+        data_root_ = node_path_() + "/c";
+    } else {
+        data_root_ = node_path_() + "/c/" + std::to_string(append_chunk_index_);
+    }
 }
 
 size_t
@@ -103,9 +110,11 @@ zarr::Array::memory_usage() const noexcept
     return total;
 }
 
-size_t
-zarr::Array::write_frame(LockedBuffer& data)
+zarr::WriteResult
+zarr::Array::write_frame(LockedBuffer& data, size_t& bytes_written)
 {
+    bytes_written = 0;
+
     const auto nbytes_data = data.size();
     const auto nbytes_frame =
       bytes_of_frame(*config_->dimensions, config_->dtype);
@@ -116,7 +125,13 @@ zarr::Array::write_frame(LockedBuffer& data)
                   ", got ",
                   nbytes_data,
                   ". Skipping");
-        return 0;
+        return WriteResult::FrameSizeMismatch;
+    }
+
+    // check that we can append
+    if (max_bytes_ > 0 && total_bytes_written_ + nbytes_data > max_bytes_) {
+        LOG_ERROR("Unable to write. Data would exceed bounds of array.");
+        return WriteResult::OutOfBounds;
     }
 
     if (bytes_to_flush_ == 0) { // first frame, we need to init the buffers
@@ -125,17 +140,13 @@ zarr::Array::write_frame(LockedBuffer& data)
 
     // split the incoming frame into tiles and write them to the chunk
     // buffers
-    const auto bytes_written = write_frame_to_chunks_(data);
-    EXPECT(bytes_written == nbytes_data, "Failed to write frame to chunks");
+    bytes_written = write_frame_to_chunks_(data);
+    CHECK(bytes_written <= nbytes_data);
 
-    LOG_DEBUG("Wrote ",
-              bytes_written,
-              " bytes of frame ",
-              frames_written_,
-              " to LOD ",
-              config_->level_of_detail);
+    LOG_DEBUG(
+      "Wrote ", bytes_written, " bytes to LOD ", config_->level_of_detail);
     bytes_to_flush_ += bytes_written;
-    ++frames_written_;
+    total_bytes_written_ += bytes_written;
 
     if (should_flush_()) {
         CHECK(compress_and_flush_data_());
@@ -147,7 +158,14 @@ zarr::Array::write_frame(LockedBuffer& data)
         bytes_to_flush_ = 0;
     }
 
-    return bytes_written;
+    return bytes_written == data.size() ? WriteResult::Ok
+                                        : WriteResult::PartialWrite;
+}
+
+size_t
+zarr::Array::max_bytes() const
+{
+    return max_bytes_;
 }
 
 std::vector<std::string>
@@ -164,19 +182,26 @@ zarr::Array::make_metadata_()
     std::vector<size_t> array_shape, chunk_shape, shard_shape;
     const auto& dims = config_->dimensions;
 
-    size_t append_size = frames_written_;
-    for (auto i = dims->ndims() - 3; i > 0; --i) {
-        const auto& dim = dims->at(i);
-        const auto& array_size_px = dim.array_size_px;
-        CHECK(array_size_px);
-        append_size = (append_size + array_size_px - 1) / array_size_px;
-    }
-    array_shape.push_back(append_size);
+    // For 2D arrays, skip the phantom singleton dimension in metadata
+    const size_t start_dim = dims->is_2d() ? 1 : 0;
 
-    const auto& final_dim = dims->final_dim();
-    chunk_shape.push_back(final_dim.chunk_size_px);
-    shard_shape.push_back(final_dim.shard_size_chunks * chunk_shape.back());
-    for (auto i = 1; i < dims->ndims(); ++i) {
+    if (!dims->is_2d()) {
+        // Compute append dimension size for 3D+ arrays
+        size_t append_size = frames_written_();
+        for (auto i = dims->ndims() - 3; i > 0; --i) {
+            const auto& dim = dims->at(i);
+            const auto& array_size_px = dim.array_size_px;
+            CHECK(array_size_px);
+            append_size = (append_size + array_size_px - 1) / array_size_px;
+        }
+        array_shape.push_back(append_size);
+
+        const auto& final_dim = dims->final_dim();
+        chunk_shape.push_back(final_dim.chunk_size_px);
+        shard_shape.push_back(final_dim.shard_size_chunks * chunk_shape.back());
+    }
+
+    for (auto i = start_dim == 0 ? 1 : start_dim; i < dims->ndims(); ++i) {
         const auto& dim = dims->at(i);
         array_shape.push_back(dim.array_size_px);
         chunk_shape.push_back(dim.chunk_size_px);
@@ -207,9 +232,11 @@ zarr::Array::make_metadata_()
     metadata["data_type"] = sample_type_to_dtype(config_->dtype);
     metadata["storage_transformers"] = json::array();
 
-    std::vector<std::string> dimension_names(dims->ndims());
-    for (auto i = 0; i < dimension_names.size(); ++i) {
-        dimension_names[i] = dims->at(i).name;
+    // Skip phantom dimension (index 0) for 2D arrays in dimension names
+    const size_t name_start = dims->is_2d() ? 1 : 0;
+    std::vector<std::string> dimension_names(dims->ndims() - name_start);
+    for (auto i = name_start; i < dims->ndims(); ++i) {
+        dimension_names[i - name_start] = dims->at(i).name;
     }
     metadata["dimension_names"] = dimension_names;
 
@@ -239,18 +266,42 @@ zarr::Array::make_metadata_()
     configuration["codecs"] = json::array({ codec });
 
     if (config_->compression_params) {
-        const auto params = *config_->compression_params;
-
-        auto compression_config = json::object();
-        compression_config["blocksize"] = 0;
-        compression_config["clevel"] = params.clevel;
-        compression_config["cname"] = params.codec_id;
-        compression_config["shuffle"] = shuffle_to_string(params.shuffle);
-        compression_config["typesize"] = bytes_of_type(config_->dtype);
-
-        auto compression_codec = json::object();
-        compression_codec["configuration"] = compression_config;
-        compression_codec["name"] = "blosc";
+        auto compression_codec = std::visit(
+          [this](const auto& params) -> json {
+              using T = std::decay_t<decltype(params)>;
+              if constexpr (std::is_same_v<T, zarr::BloscCompressionParams>) {
+                  auto config = json::object();
+                  config["blocksize"] = 0;
+                  config["clevel"] = params.clevel;
+                  config["cname"] = params.codec_id;
+                  config["shuffle"] = shuffle_to_string(params.shuffle);
+                  config["typesize"] = bytes_of_type(config_->dtype);
+                  return json::object({
+                    { "name", "blosc" },
+                    { "configuration", config },
+                  });
+              } else if constexpr (std::is_same_v<T,
+                                                   zarr::ZstdCompressionParams>) {
+                  return json::object({
+                    { "name", "zstd" },
+                    { "configuration",
+                      json::object({
+                        { "level", params.level },
+                        { "checksum", false },
+                      }) },
+                  });
+              } else {
+                  static_assert(std::is_same_v<T, zarr::Lz4CompressionParams>);
+                  return json::object({
+                    { "name", "lz4" },
+                    { "configuration",
+                      json::object({
+                        { "level", params.level },
+                      }) },
+                  });
+              }
+          },
+          *config_->compression_params);
         configuration["codecs"].push_back(compression_codec);
     }
 
@@ -278,7 +329,7 @@ zarr::Array::close_()
         }
         close_sinks_();
 
-        if (frames_written_ > 0) {
+        if (frames_written_() > 0) {
             CHECK(write_metadata_());
             for (auto& [key, sink] : metadata_sinks_) {
                 EXPECT(zarr::finalize_sink(std::move(sink)),
@@ -482,7 +533,8 @@ zarr::Array::write_frame_to_chunks_(LockedBuffer& data)
         // Allocate buffer for transposed frame
         transposed_frame.resize(frame.size());
 
-        // Transpose: input is acq_rows × acq_cols, output is acq_cols × acq_rows
+        // Transpose: input is acq_rows × acq_cols, output is acq_cols ×
+        // acq_rows
         transpose_frame(frame.data(),
                         transposed_frame.data(),
                         acq_rows,
@@ -514,9 +566,10 @@ zarr::Array::write_frame_to_chunks_(LockedBuffer& data)
 
     // don't take the frame id from the incoming frame, as the camera may have
     // dropped frames
-    const auto acquisition_frame_id = frames_written_;
+    const auto acquisition_frame_id = frames_written_();
 
-    // Transpose frame_id from acquisition order to prescribed storage_dimension_order
+    // Transpose frame_id from acquisition order to prescribed
+    // storage_dimension_order
     const auto frame_id = dimensions->transpose_frame_id(acquisition_frame_id);
 
     // offset among the chunks in the lattice
@@ -714,8 +767,19 @@ zarr::Array::compress_and_flush_data_()
                 bool success = false;
 
                 try {
-                    if (!chunk_buffer.compress(compression_params,
-                                               bytes_per_px)) {
+                    bool compressed = std::visit(
+                      [&chunk_buffer, bytes_per_px](const auto& params) {
+                          using T = std::decay_t<decltype(params)>;
+                          if constexpr (std::is_same_v<
+                                          T,
+                                          zarr::BloscCompressionParams>) {
+                              return chunk_buffer.compress(params, bytes_per_px);
+                          } else {
+                              return chunk_buffer.compress(params);
+                          }
+                      },
+                      compression_params);
+                    if (!compressed) {
                         err = "Failed to compress chunk " +
                               std::to_string(chunk_idx) + " (internal index " +
                               std::to_string(internal_idx) + " of shard " +
@@ -885,7 +949,7 @@ zarr::Array::should_flush_() const
     }
 
     CHECK(frames_before_flush > 0);
-    return frames_written_ % frames_before_flush == 0;
+    return frames_written_() % frames_before_flush == 0;
 }
 
 bool
@@ -900,7 +964,7 @@ zarr::Array::should_rollover_() const
     }
 
     CHECK(frames_before_flush > 0);
-    return frames_written_ % frames_before_flush == 0;
+    return frames_written_() % frames_before_flush == 0;
 }
 
 void
@@ -910,7 +974,12 @@ zarr::Array::rollover_()
 
     close_sinks_();
     ++append_chunk_index_;
-    data_root_ = node_path_() + "/c/" + std::to_string(append_chunk_index_);
+    // For 2D arrays, don't include append_chunk_index in the path
+    if (config_->dimensions->is_2d()) {
+        data_root_ = node_path_() + "/c";
+    } else {
+        data_root_ = node_path_() + "/c/" + std::to_string(append_chunk_index_);
+    }
 }
 
 void
@@ -923,4 +992,10 @@ zarr::Array::close_sinks_()
           finalize_sink(std::move(sink)), "Failed to finalize sink at ", path);
     }
     data_sinks_.clear();
+}
+
+size_t
+zarr::Array::frames_written_() const
+{
+    return total_bytes_written_ / bytes_per_frame_;
 }

@@ -23,6 +23,9 @@ add_library(${tgt}
         zarr.common.cpp
         blosc.compression.params.hh
         blosc.compression.params.cpp
+        zstd.compression.params.hh
+        lz4.compression.params.hh
+        compression.params.hh
         thread.pool.hh
         thread.pool.cpp
         s3.connection.hh
@@ -60,11 +63,13 @@ target_link_libraries(${tgt} PRIVATE
         blosc_static
         miniocpp::miniocpp
         Crc32c::crc32c
+        $<IF:$<TARGET_EXISTS:zstd::libzstd_static>,zstd::libzstd_static,zstd::libzstd_shared>
+        lz4::lz4
         OpenMP::OpenMP_CXX
 )
 
 target_compile_definitions(${tgt} PRIVATE
-        "ACQUIRE_ZARR_API_VERSION=\"0.6.0\""
+        "ACQUIRE_ZARR_API_VERSION=\"0.7.0\""
 )
 
 set_target_properties(${tgt} PROPERTIES

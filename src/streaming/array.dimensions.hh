@@ -51,6 +51,13 @@ class ArrayDimensions
 
     size_t ndims() const;
 
+    /**
+     * @brief Compute the maximum allowable number of bytes for the array
+     * described by these dimensions. If 0, this value is unbounded.
+     * @return The maximum allowable byte count that these dimensions specify.
+     */
+    uint64_t max_byte_count() const;
+
     const ZarrDimension& operator[](size_t idx) const;
     const ZarrDimension& at(size_t idx) const { return operator[](idx); }
 
@@ -199,6 +206,17 @@ class ArrayDimensions
      */
     uint64_t transpose_frame_id(uint64_t frame_id) const;
 
+    /**
+     * @brief Check if this is a 2D array (user provided only Y, X dimensions).
+     *
+     * Internally, 2D arrays have a phantom singleton dimension prepended to
+     * allow reuse of the 3D+ code paths. This method returns true if the
+     * original user input was 2D, which affects metadata and path generation.
+     *
+     * @return True if the user-visible array is 2D.
+     */
+    bool is_2d() const;
+
   private:
     struct TranspositionMap
     {
@@ -219,6 +237,8 @@ class ArrayDimensions
 
     std::vector<ZarrDimension> dims_; // Dimensions in storage order
     std::optional<TranspositionMap> transpose_map_;
+
+    bool is_2d_; // True if user provided only 2 dimensions (Y, X)
 
     ZarrDataType dtype_;
 

@@ -60,6 +60,15 @@ Available recipes:
     uv-sync *args  # Run uv sync (includes testing dependencies)
 ```
 
+## Docker
+
+Build and run the tests in a container:
+
+```bash
+docker build -t acquire-zarr .
+docker run --rm acquire-zarr
+```
+
 ## Building
 
 ### Installing dependencies
@@ -253,6 +262,24 @@ stream.append(my_frame_data)
 # When done, close the stream to flush any remaining data
 stream.close()
 ```
+
+### Understanding the output hierarchy
+
+The Zarr hierarchy produced by a stream depends on `output_key` and
+`downsampling_method`:
+
+| `output_key` | `downsampling_method` | Result at `store_path` |
+|---|---|---|
+| `""` (empty) | `None` | Simple array at `store_path/` |
+| `"myarray"` | `None` | Simple array at `store_path/myarray/` |
+| `""` (empty) | set (e.g. `MEAN`) | OME-NGFF multiscales group at `store_path/`, array at `store_path/0/` |
+| `"myarray"` | set (e.g. `MEAN`) | OME-NGFF multiscales group at `store_path/myarray/`, array at `store_path/myarray/0/` |
+
+When `downsampling_method` is set, an OME-NGFF multiscales group is created
+at `store_path/output_key/` (or at `store_path/` if `output_key` is empty),
+containing the full-resolution array at level `0` plus additional downsampled
+levels. The number of levels is determined automatically from the chunk and
+array sizes.
 
 ### Organizing data within a Zarr container
 

@@ -2,7 +2,11 @@
 #include "zarr.common.hh"
 
 #include <blosc.h>
+#include <zstd.h>
+#include <lz4.h>
+#include <lz4hc.h>
 
+#include <climits>
 #include <regex>
 #include <stdexcept>
 
@@ -130,6 +134,82 @@ zarr::compress_in_place(ByteVector& data,
     }
 
     compressed_data.resize(n_bytes_compressed);
+    data.swap(compressed_data);
+
+    return true;
+}
+
+bool
+zarr::compress_in_place(ByteVector& data,
+                        const zarr::ZstdCompressionParams& params)
+{
+    if (data.empty()) {
+        LOG_WARNING("Buffer is empty, not compressing.");
+        return false;
+    }
+
+    const size_t max_dst_size = ZSTD_compressBound(data.size());
+    std::vector<uint8_t> compressed_data(max_dst_size);
+
+    const size_t compressed_size = ZSTD_compress(compressed_data.data(),
+                                                  compressed_data.size(),
+                                                  data.data(),
+                                                  data.size(),
+                                                  params.level);
+
+    if (ZSTD_isError(compressed_size)) {
+        LOG_ERROR("ZSTD_compress failed: ", ZSTD_getErrorName(compressed_size));
+        return false;
+    }
+
+    compressed_data.resize(compressed_size);
+    data.swap(compressed_data);
+
+    return true;
+}
+
+bool
+zarr::compress_in_place(ByteVector& data,
+                        const zarr::Lz4CompressionParams& params)
+{
+    if (data.empty()) {
+        LOG_WARNING("Buffer is empty, not compressing.");
+        return false;
+    }
+
+    if (data.size() > static_cast<size_t>(INT_MAX)) {
+        LOG_ERROR("LZ4 input too large: ",
+                  data.size(),
+                  " bytes exceeds INT_MAX");
+        return false;
+    }
+
+    const int src_size = static_cast<int>(data.size());
+    const int max_dst_size = LZ4_compressBound(src_size);
+    std::vector<uint8_t> compressed_data(max_dst_size);
+
+    int compressed_size;
+    if (params.level == 0) {
+        compressed_size =
+          LZ4_compress_default(reinterpret_cast<const char*>(data.data()),
+                               reinterpret_cast<char*>(compressed_data.data()),
+                               src_size,
+                               max_dst_size);
+    } else {
+        compressed_size =
+          LZ4_compress_HC(reinterpret_cast<const char*>(data.data()),
+                          reinterpret_cast<char*>(compressed_data.data()),
+                          src_size,
+                          max_dst_size,
+                          params.level);
+    }
+
+    if (compressed_size <= 0) {
+        LOG_ERROR("LZ4 compression failed with code ", compressed_size);
+        return false;
+    }
+
+    compressed_data.resize(compressed_size);
     data.swap(compressed_data);
 
     return true;
