@@ -49,5 +49,6 @@ ENV CMAKE_PREFIX_PATH="/opt/nvcomp:/opt/aws"
 WORKDIR /src
 COPY . .
 
-RUN cmake -S shim -B shim/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+ARG CMAKE_BUILD_TYPE=Release
+RUN cmake -S shim -B shim/build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
     && cmake --build shim/build

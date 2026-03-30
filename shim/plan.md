@@ -2,9 +2,10 @@
 
 ## Current State (2026-03-29)
 
-3 of 12 integration tests passing:
+4 of 12 integration tests passing:
 - `stream-raw-to-filesystem` — PASS
 - `stream-multi-frame-append` — PASS (fixed: chucky PR #15)
+- `stream-multiscale-trivial-3rd-dim` — PASS (fixed: chucky PR #16)
 - `stream-with-ragged-final-shard` — PASS
 
 ## Chucky submodule
@@ -17,7 +18,8 @@ Open chucky issues filed during shim work:
 - [#5](https://github.com/acquire-project/chucky/issues/5) — CPU stream + zarr_fs_sink EFAULT (FIXED)
 - [#8](https://github.com/acquire-project/chucky/issues/8) — consolidated_metadata field (FIXED)
 - [#12](https://github.com/acquire-project/chucky/issues/12) — unit/scale on struct dimension (FIXED, unit omit behavior in PR #14)
-- [PR #15](https://github.com/acquire-project/chucky/pull/15) — Fix final shape for append dims (rounds up to chunk boundary → exact count)
+- [PR #15](https://github.com/acquire-project/chucky/pull/15) — Fix final shape for append dims (MERGED)
+- [PR #16](https://github.com/acquire-project/chucky/pull/16) — Fix LOD level count termination (stop at chunk_count≤1, not array_size<chunk_size)
 
 ## Test Failures and Required Work
 
@@ -58,8 +60,10 @@ multiscale tests might be failing because `downsample` is never set. Chucky
 needs `dimension.downsample = 1` on the dimensions to include in the LOD
 pyramid. The shim currently sets `downsample = 0` on all dimensions.
 
-**Action:** When `multiscale=true`, set `downsample=1` on spatial dimensions
-(dimensions where `type == ZarrDimensionType_Space`).
+**DONE (shim):** `downsample=1` now set on spatial dims when `multiscale=true`.
+`trivial-3rd-dim` went from 1→2 LOD levels (expected 3). Remaining difference
+is chucky's LOD auto-detection stopping one level early — needs investigation
+in chucky's `lod_plan_init` halving loop (`next_level_below_chunk` check).
 
 ### Phase 5: Named and Multiple Arrays
 
