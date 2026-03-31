@@ -1,0 +1,10 @@
+{
+  "name": "acquire-zarr-shim",
+  "version-string": "0.0.0",
+  "dependencies": [
+    "aws-c-s3",
+    "lz4",
+    "zstd",
+    "nlohmann-json"
+  ]
+}
