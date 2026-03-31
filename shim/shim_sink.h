@@ -6,6 +6,7 @@ struct shard_sink;
 
 enum shim_sink_kind
 {
+    SHIM_SINK_FS,
     SHIM_SINK_FS_MULTISCALE,
 };
 
@@ -14,6 +15,7 @@ struct shim_sink
     enum shim_sink_kind kind;
     union
     {
+        struct zarr_fs_sink* fs;
         struct zarr_fs_multiscale_sink* fs_ms;
     };
 };
