@@ -306,8 +306,6 @@ compressor_to_str(ZarrCompressor c)
             return "BLOSC1";
         case ZarrCompressor_Zstd:
             return "ZSTD";
-        case ZarrCompressor_Lz4:
-            return "LZ4";
         default:
             return "UNKNOWN";
     }
@@ -325,8 +323,6 @@ compression_codec_to_str(ZarrCompressionCodec c)
             return "BLOSC_ZSTD";
         case ZarrCompressionCodec_Zstd:
             return "ZSTD";
-        case ZarrCompressionCodec_Lz4:
-            return "LZ4";
         default:
             return "UNKNOWN";
     }
@@ -1259,7 +1255,9 @@ class PyZarrStream
         }
     }
 
-    bool write_custom_metadata(py::str custom_metadata, bool overwrite)
+    bool write_custom_metadata(py::object metadata,
+                               const std::optional<std::string>& array_key,
+                               const std::optional<std::string>& metadata_key)
     {
         if (!is_active()) {
             PyErr_SetString(PyExc_RuntimeError,
@@ -1267,14 +1265,26 @@ class PyZarrStream
             throw py::error_already_set();
         }
 
-        auto status = ZarrStream_write_custom_metadata(
-          stream_.get(),
-          custom_metadata.cast<std::string>().c_str(),
-          overwrite);
+        std::string metadata_str;
+        if (py::isinstance<py::dict>(metadata)) {
+            py::module_ json = py::module_::import("json");
+            metadata_str = json.attr("dumps")(metadata).cast<std::string>();
+        } else if (py::isinstance<py::str>(metadata)) {
+            metadata_str = metadata.cast<std::string>();
+        } else {
+            PyErr_SetString(PyExc_TypeError, "metadata must be a str or dict");
+            throw py::error_already_set();
+        }
 
-        if (status == ZarrStatusCode_WillNotOverwrite) {
-            return false; // Metadata already exists and overwrite is false
-        } else if (status != ZarrStatusCode_Success) {
+        const char* array_cstr =
+          array_key.has_value() ? array_key->c_str() : nullptr;
+        const char* meta_cstr =
+          metadata_key.has_value() ? metadata_key->c_str() : nullptr;
+
+        auto status = ZarrStream_write_custom_metadata(
+          stream_.get(), array_cstr, meta_cstr, metadata_str.c_str());
+
+        if (status != ZarrStatusCode_Success) {
             std::string err = "Failed to write custom metadata: " +
                               std::string(Zarr_get_status_message(status));
             PyErr_SetString(PyExc_RuntimeError, err.c_str());
@@ -1391,8 +1401,7 @@ PYBIND11_MODULE(acquire_zarr, m)
     py::enum_<ZarrCompressor>(m, "Compressor")
       .value(compressor_to_str(ZarrCompressor_None), ZarrCompressor_None)
       .value(compressor_to_str(ZarrCompressor_Blosc1), ZarrCompressor_Blosc1)
-      .value(compressor_to_str(ZarrCompressor_Zstd), ZarrCompressor_Zstd)
-      .value(compressor_to_str(ZarrCompressor_Lz4), ZarrCompressor_Lz4);
+      .value(compressor_to_str(ZarrCompressor_Zstd), ZarrCompressor_Zstd);
 
     py::enum_<ZarrCompressionCodec>(m, "CompressionCodec")
       .value(compression_codec_to_str(ZarrCompressionCodec_None),
@@ -1402,9 +1411,7 @@ PYBIND11_MODULE(acquire_zarr, m)
       .value(compression_codec_to_str(ZarrCompressionCodec_BloscZstd),
              ZarrCompressionCodec_BloscZstd)
       .value(compression_codec_to_str(ZarrCompressionCodec_Zstd),
-             ZarrCompressionCodec_Zstd)
-      .value(compression_codec_to_str(ZarrCompressionCodec_Lz4),
-             ZarrCompressionCodec_Lz4);
+             ZarrCompressionCodec_Zstd);
 
     py::enum_<ZarrDimensionType>(m, "DimensionType")
       .value(dimension_type_to_str(ZarrDimensionType_Space),
@@ -2278,8 +2285,9 @@ PYBIND11_MODULE(acquire_zarr, m)
            py::arg("key") = std::nullopt)
       .def("write_custom_metadata",
            &PyZarrStream::write_custom_metadata,
-           py::arg("custom_metadata"),
-           py::arg("overwrite"))
+           py::arg("metadata"),
+           py::arg("array_key") = std::nullopt,
+           py::arg("metadata_key") = std::nullopt)
       .def("is_active", &PyZarrStream::is_active)
       .def("get_current_memory_usage",
            &PyZarrStream::get_current_memory_usage,
