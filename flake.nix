@@ -16,6 +16,7 @@
           name = "acquire-zarr";
 
           buildInputs = with pkgs; [
+            tmux
             # Build tools
             cmake
             ninja

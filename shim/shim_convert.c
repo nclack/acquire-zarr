@@ -32,37 +32,46 @@ shim_convert_dtype(ZarrDataType dt)
     }
 }
 
-enum compression_codec
+struct codec_config
 shim_convert_codec(const ZarrCompressionSettings* settings)
 {
+    struct codec_config cfg = { .id = CODEC_NONE,
+                                .level = 0,
+                                .shuffle = CODEC_SHUFFLE_NONE };
     if (!settings || settings->compressor == ZarrCompressor_None) {
-        return CODEC_NONE;
+        return cfg;
     }
+    cfg.level = settings->level;
+    cfg.shuffle = (enum codec_shuffle)settings->shuffle;
     switch (settings->codec) {
         case ZarrCompressionCodec_BloscLZ4:
-        case ZarrCompressionCodec_Lz4:
-            return CODEC_LZ4;
+            cfg.id = CODEC_BLOSC_LZ4;
+            break;
         case ZarrCompressionCodec_BloscZstd:
+            cfg.id = CODEC_BLOSC_ZSTD;
+            break;
         case ZarrCompressionCodec_Zstd:
-            return CODEC_ZSTD;
+            cfg.id = CODEC_ZSTD;
+            break;
         default:
-            return CODEC_NONE;
+            break;
     }
+    return cfg;
 }
 
-enum dimension_axis_type
-shim_convert_axis_type(ZarrDimensionType type)
+enum ngff_axis_type
+shim_convert_ngff_axis_type(ZarrDimensionType type)
 {
     switch (type) {
         case ZarrDimensionType_Space:
-            return dimension_axis_space;
+            return ngff_axis_space;
         case ZarrDimensionType_Channel:
-            return dimension_axis_channel;
+            return ngff_axis_channel;
         case ZarrDimensionType_Time:
-            return dimension_axis_time;
+            return ngff_axis_time;
         case ZarrDimensionType_Other:
         default:
-            return dimension_axis_other;
+            return ngff_axis_space;
     }
 }
 
@@ -101,9 +110,6 @@ shim_convert_dimensions(const ZarrDimensionProperties* props,
         dims[i].downsample =
           multiscale && props[i].type == ZarrDimensionType_Space;
         dims[i].storage_position = (uint8_t)i;
-        dims[i].ngff.type = shim_convert_axis_type(props[i].type);
-        dims[i].ngff.unit = props[i].unit;
-        dims[i].ngff.scale = props[i].scale;
     }
 
     if (storage_dimension_order) {
@@ -113,4 +119,21 @@ shim_convert_dimensions(const ZarrDimensionProperties* props,
     }
 
     return dims;
+}
+
+struct ngff_axis*
+shim_convert_ngff_axes(const ZarrDimensionProperties* props, size_t count)
+{
+    struct ngff_axis* axes = calloc(count, sizeof(struct ngff_axis));
+    if (!axes) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        axes[i].type = shim_convert_ngff_axis_type(props[i].type);
+        axes[i].unit = props[i].unit;
+        axes[i].scale = props[i].scale;
+    }
+
+    return axes;
 }

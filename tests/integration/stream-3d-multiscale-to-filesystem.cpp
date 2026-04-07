@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
 #include <vector>
@@ -237,16 +238,20 @@ verify_group_metadata(const nlohmann::json& meta)
 void
 verify_array_metadata(const nlohmann::json& meta, int level)
 {
+    // Compute expected shapes using iterative halving with chunk clamping
     uint32_t expected_array_width = array_width,
              expected_array_height = array_height,
              expected_array_planes = array_planes, prev_planes = array_planes,
              acquired_frames = frames_to_acquire;
     for (auto i = 0; i < level; ++i) {
-        expected_array_width = (expected_array_width + 1) / 2;
-        expected_array_height = (expected_array_height + 1) / 2;
+        expected_array_width =
+          std::max(chunk_width, (expected_array_width + 1) / 2);
+        expected_array_height =
+          std::max(chunk_height, (expected_array_height + 1) / 2);
 
         prev_planes = expected_array_planes;
-        expected_array_planes = (expected_array_planes + 1) / 2;
+        expected_array_planes =
+          std::max(chunk_planes, (expected_array_planes + 1) / 2);
 
         acquired_frames = acquired_frames * expected_array_planes / prev_planes;
     }
@@ -254,19 +259,17 @@ verify_array_metadata(const nlohmann::json& meta, int level)
     const auto expected_array_timepoints = static_cast<uint32_t>(
       std::ceil(acquired_frames / (array_channels * expected_array_planes)));
 
-    const auto expected_chunk_planes =
-      std::min(chunk_planes, expected_array_planes);
-    const auto expected_chunk_height =
-      std::min(chunk_height, expected_array_height);
-    const auto expected_chunk_width =
-      std::min(chunk_width, expected_array_width);
+    // Chunk sizes are constant across levels
+    const auto expected_chunk_planes = chunk_planes;
+    const auto expected_chunk_height = chunk_height;
+    const auto expected_chunk_width = chunk_width;
 
     const auto expected_shard_planes =
-      std::min(expected_array_planes, expected_chunk_planes * shard_planes);
+      std::min(expected_array_planes, chunk_planes * shard_planes);
     const auto expected_shard_height =
-      std::min(expected_array_height, expected_chunk_height * shard_height);
+      std::min(expected_array_height, chunk_height * shard_height);
     const auto expected_shard_width =
-      std::min(expected_array_width, expected_chunk_width * shard_width);
+      std::min(expected_array_width, chunk_width * shard_width);
 
     const auto& shape = meta["shape"];
     EXPECT_EQ(size_t, shape.size(), 5);
@@ -330,22 +333,30 @@ verify_array_metadata(const nlohmann::json& meta, int level)
 void
 verify_file_data(int level)
 {
-    const auto acquired_frames = frames_to_acquire / std::pow(2, level);
-    const auto expected_array_width =
-      static_cast<uint32_t>(std::ceil(array_width / std::pow(2, level)));
-    const auto expected_array_height =
-      static_cast<uint32_t>(std::ceil(array_height / std::pow(2, level)));
-    const auto expected_array_planes =
-      static_cast<uint32_t>(std::ceil(array_planes / std::pow(2, level)));
+    // Compute expected shapes using iterative halving with chunk clamping
+    uint32_t expected_array_width = array_width,
+             expected_array_height = array_height,
+             expected_array_planes = array_planes, prev_planes = array_planes,
+             acquired_frames = frames_to_acquire;
+    for (int i = 0; i < level; ++i) {
+        expected_array_width =
+          std::max(chunk_width, (expected_array_width + 1) / 2);
+        expected_array_height =
+          std::max(chunk_height, (expected_array_height + 1) / 2);
+
+        prev_planes = expected_array_planes;
+        expected_array_planes =
+          std::max(chunk_planes, (expected_array_planes + 1) / 2);
+
+        acquired_frames = acquired_frames * expected_array_planes / prev_planes;
+    }
     const auto expected_array_timepoints = static_cast<uint32_t>(
       std::ceil(acquired_frames / (array_channels * expected_array_planes)));
 
-    const auto expected_chunk_planes =
-      std::min(chunk_planes, expected_array_planes);
-    const auto expected_chunk_height =
-      std::min(chunk_height, expected_array_height);
-    const auto expected_chunk_width =
-      std::min(chunk_width, expected_array_width);
+    // Chunk sizes are constant across levels
+    const auto expected_chunk_planes = chunk_planes;
+    const auto expected_chunk_height = chunk_height;
+    const auto expected_chunk_width = chunk_width;
 
     const auto expected_chunks_in_x =
       (expected_array_width + expected_chunk_width - 1) / expected_chunk_width;

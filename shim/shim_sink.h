@@ -1,13 +1,15 @@
 #pragma once
 
-#include "zarr_fs_sink.h"
+#include "zarr.h"
+#include "ngff.h"
 
 struct shard_sink;
 
 enum shim_sink_kind
 {
-    SHIM_SINK_FS,
-    SHIM_SINK_FS_MULTISCALE,
+    SHIM_SINK_NONE,
+    SHIM_SINK_ARRAY,
+    SHIM_SINK_MULTISCALE,
 };
 
 struct shim_sink
@@ -15,8 +17,8 @@ struct shim_sink
     enum shim_sink_kind kind;
     union
     {
-        struct zarr_fs_sink* fs;
-        struct zarr_fs_multiscale_sink* fs_ms;
+        struct zarr_array* array;
+        struct ngff_multiscale* multiscale;
     };
 };
 

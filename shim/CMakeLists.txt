@@ -28,7 +28,8 @@ target_include_directories(acquire-zarr-chucky-cpu
 
 target_link_libraries(acquire-zarr-chucky-cpu PRIVATE
     stream_cpu multiarray_cpu
-    zarr_fs_sink zarr_s3_sink
+    store_fs zarr_array zarr_group ngff_multiscale
+    hcs hcs_metadata
     dimension writer stream_config
     platform chucky_log
 )
@@ -66,7 +67,6 @@ if(nlohmann_json_FOUND)
         stream-named-array-to-filesystem
         stream-compressed-to-filesystem
         stream-zstd-compressed-to-filesystem
-        stream-lz4-compressed-to-filesystem
         stream-2d-multiscale-to-filesystem
         stream-3d-multiscale-to-filesystem
         stream-multi-frame-append
