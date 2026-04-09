@@ -50,7 +50,7 @@ class Array : public ArrayBase
     bool is_s3_array_() const;
 
     void make_data_paths_();
-    [[nodiscard]] std::unique_ptr<Sink> make_data_sink_(std::string_view path);
+    [[nodiscard]] std::unique_ptr<Sink> make_data_sink_(std::string_view path) const;
     void fill_buffers_();
 
     bool should_flush_() const;

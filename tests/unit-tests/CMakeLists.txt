@@ -10,7 +10,6 @@ set(tests
         array-dimensions-shard-index-for-chunk
         array-dimensions-shard-internal-index
         thread-pool-push-to-job-queue
-        make-dirs
         construct-data-paths
         s3-connection-bucket-exists
         s3-connection-object-exists-check-false-positives
@@ -19,7 +18,6 @@ set(tests
         file-sink-write
         s3-sink-write
         s3-sink-write-multipart
-        make-data-sinks
         array-write-even
         array-write-ragged-append-dim
         array-write-ragged-internal-dim
