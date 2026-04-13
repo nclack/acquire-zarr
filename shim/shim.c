@@ -404,9 +404,62 @@ ZarrStreamSettings_estimate_max_memory_usage(
   const ZarrStreamSettings* settings,
   size_t* usage)
 {
-    (void)settings;
-    (void)usage;
-    return ZarrStatusCode_NotYetImplemented;
+    if (!settings || !settings->arrays) {
+        return ZarrStatusCode_InvalidArgument;
+    }
+    if (!usage) {
+        return ZarrStatusCode_InvalidArgument;
+    }
+
+    size_t total = 0;
+
+    for (size_t i = 0; i < settings->array_count; ++i) {
+        const ZarrArraySettings* as = &settings->arrays[i];
+        const size_t ndims = as->dimension_count;
+        if (ndims < 2 || !as->dimensions) {
+            return ZarrStatusCode_InvalidArgument;
+        }
+
+        enum dtype dt = shim_convert_dtype(as->data_type);
+        struct codec_config codec = shim_convert_codec(as->compression_settings);
+        struct dimension* dims =
+          shim_convert_dimensions(as->dimensions,
+                                 ndims,
+                                 as->storage_dimension_order,
+                                 as->multiscale);
+        if (!dims) {
+            return ZarrStatusCode_InternalError;
+        }
+
+        size_t frame_bytes = dtype_bpe(dt) *
+                             as->dimensions[ndims - 2].array_size_px *
+                             as->dimensions[ndims - 1].array_size_px;
+
+        struct tile_stream_configuration cfg = {
+            .buffer_capacity_bytes = frame_bytes,
+            .dtype = dt,
+            .rank = (uint8_t)ndims,
+            .dimensions = dims,
+            .codec = codec,
+            .reduce_method =
+              shim_convert_reduce_method(as->downsampling_method),
+            .append_reduce_method =
+              shim_convert_reduce_method(as->downsampling_method),
+        };
+
+        struct tile_stream_cpu_memory_info info = { 0 };
+        int err = tile_stream_cpu_memory_estimate(&cfg, &info);
+        free(dims);
+
+        if (err) {
+            return ZarrStatusCode_InternalError;
+        }
+
+        total += info.heap_bytes + frame_bytes;
+    }
+
+    *usage = total;
+    return ZarrStatusCode_Success;
 }
 
 size_t

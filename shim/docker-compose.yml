@@ -17,6 +17,7 @@ services:
     build:
       context: ..
       dockerfile: shim/Dockerfile
+      target: build
     devices:
       - nvidia.com/gpu=all
     depends_on:

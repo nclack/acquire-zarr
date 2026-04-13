@@ -72,7 +72,7 @@ if(nlohmann_json_FOUND)
         stream-multi-frame-append
         stream-multiscale-trivial-3rd-dim
         stream-multiple-arrays-to-filesystem
-        # estimate-memory-usage  # skipped: test expects acquire-zarr's formula, not chucky's
+        estimate-memory-usage
         stream-pure-hcs-acquisition
         stream-mixed-flat-and-hcs-acquisition
         stream-with-ragged-final-shard

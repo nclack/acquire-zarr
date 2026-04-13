@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ninja-build \
         libzstd-dev \
         liblz4-dev \
+        libblosc-dev \
+        zlib1g-dev \
+        libsnappy-dev \
         libomp-dev \
         libssl-dev \
         nlohmann-json3-dev \

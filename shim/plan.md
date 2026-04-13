@@ -1,18 +1,21 @@
 # Shim Implementation Plan
 
-## Current State (2026-04-06)
+## Current State (2026-04-13)
 
-10 of 12 integration tests passing (estimate-memory-usage excluded):
+All 13 integration tests passing:
 - `stream-raw-to-filesystem` — PASS
 - `stream-named-array-to-filesystem` — PASS
 - `stream-compressed-to-filesystem` (blosc) — PASS
 - `stream-zstd-compressed-to-filesystem` — PASS
+- `stream-2d-multiscale-to-filesystem` — PASS
+- `stream-3d-multiscale-to-filesystem` — PASS
 - `stream-multi-frame-append` — PASS
 - `stream-multiscale-trivial-3rd-dim` — PASS
-- `stream-with-ragged-final-shard` — PASS
+- `stream-multiple-arrays-to-filesystem` — PASS
 - `stream-pure-hcs-acquisition` — PASS
 - `stream-mixed-flat-and-hcs-acquisition` — PASS
-- `stream-multiple-arrays-to-filesystem` — FAIL (scale factor mismatch)
+- `estimate-memory-usage` — PASS
+- `stream-with-ragged-final-shard` — PASS
 
 Ported shim to chucky's public API (store → zarr_array/ngff_multiscale).
 Pool management removed — each array/multiscale creates its own pool internally.
@@ -20,7 +23,7 @@ HCS support fully wired: plate/well/FOV metadata, per-FOV multiscale sinks, data
 
 ## Chucky submodule
 
-On main at 76badbd ("Clean up public API #61").
+On main at bc940a9 ("GPU CSR builder for LOD reduce #75").
 
 ## Architecture
 
@@ -57,10 +60,10 @@ Intermediate groups are written for each path component of array keys.
   - `store.zarr/plate/row/col/zarr.json` = well group with OME well attributes
   - `store.zarr/plate/row/col/fov/zarr.json` = FOV multiscale group
 
-## LOD Behavior Spec (desired, not yet fully implemented in chucky)
+## LOD Behavior Spec
 
 The integration tests encode the desired LOD behavior.
-See chucky issue #62 for the implementation plan.
+Implemented in chucky via #70 (fix scale factors) and #74 (fix epoch LOD shard geometry).
 
 **Key rules:**
 1. All LOD dimensions are halved together at each level
@@ -73,26 +76,9 @@ See chucky issue #62 for the implementation plan.
    - `nlod >= max_nlod` (always)
 6. Dimensions that reach chunk_size drop from the LOD set for subsequent levels
 
-## Remaining Test Failures
+## Remaining Work
 
-Tests fail because chucky has not yet fully implemented the desired LOD behavior.
-Test expectations encode the spec above.
-
-### 2D Multiscale
-**Test:** `stream-2d-multiscale-to-filesystem`
-**Issue:** Shard directory count mismatch in verify_file_data
-
-### 3D Multiscale
-**Test:** `stream-3d-multiscale-to-filesystem`
-**Issue:** Scale factor mismatch (chucky uses actual shape ratio, spec uses pow(2, n_times_downsampled))
-
-### Multiple Arrays
-**Test:** `stream-multiple-arrays-to-filesystem`
-**Issue:** Scale factor mismatch + shape mismatch
-
-### Memory Estimation (excluded)
-**Test:** `estimate-memory-usage`
-**Fix:** Implement using `tile_stream_cpu_memory_estimate`
+No known test failures. All shim API functions implemented.
 
 ## Files
 
