@@ -35,6 +35,16 @@ RUN git clone --depth 1 --branch v0.12.6 https://github.com/awslabs/aws-c-common
 
 ENV CMAKE_PREFIX_PATH="/opt/aws"
 
+# AWS CLI for S3 integration tests and bucket creation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -qO /tmp/awscliv2.zip \
+        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws
+
 FROM deps AS build
 WORKDIR /src
 COPY . .

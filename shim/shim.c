@@ -1149,7 +1149,20 @@ ZarrStream_create(ZarrStreamSettings* settings)
     }
 
     // Create store
-    stream->store = store_fs_create(settings->store_path, 0);
+    if (settings->s3_settings) {
+        struct store_s3_config s3cfg = {
+            .bucket = settings->s3_settings->bucket_name,
+            .prefix = settings->store_path,
+            .region = settings->s3_settings->region
+                        ? settings->s3_settings->region
+                        : "us-east-1",
+            .endpoint = settings->s3_settings->endpoint,
+        };
+        store_s3_config_set_defaults(&s3cfg);
+        stream->store = store_s3_create(&s3cfg);
+    } else {
+        stream->store = store_fs_create(settings->store_path, 0);
+    }
     if (!stream->store) {
         goto fail;
     }
@@ -1261,16 +1274,29 @@ ZarrStream_append(ZarrStream* stream,
         return ZarrStatusCode_InternalError;
     }
 
-    struct slice s = { .beg = data,
-                       .end = (const char*)data + bytes_in };
+    // NULL data means "write zeros" — allocate a zeroed frame
+    const void* frame = data;
+    void* zeros = NULL;
+    if (!data) {
+        zeros = calloc(1, bytes_in);
+        if (!zeros) {
+            return ZarrStatusCode_OutOfMemory;
+        }
+        frame = zeros;
+    }
+
+    struct slice s = { .beg = frame,
+                       .end = (const char*)frame + bytes_in };
     struct writer_result r = writer_append_wait(w, s);
+
+    free(zeros);
 
     if (r.error == writer_error_fail) {
         return ZarrStatusCode_InternalError;
     }
 
     size_t consumed =
-      (size_t)((const char*)r.rest.beg - (const char*)data);
+      (size_t)((const char*)r.rest.beg - (const char*)frame);
     // If writer consumed everything, rest.beg == rest.end (both NULL or at end)
     if (!r.rest.beg) {
         consumed = bytes_in;

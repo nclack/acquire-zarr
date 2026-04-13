@@ -28,7 +28,7 @@ target_include_directories(acquire-zarr-chucky-cpu
 
 target_link_libraries(acquire-zarr-chucky-cpu PRIVATE
     stream_cpu multiarray_cpu
-    store_fs zarr_array zarr_group ngff_multiscale
+    store_fs store_s3 zarr_array zarr_group ngff_multiscale
     hcs hcs_metadata
     dimension writer stream_config
     platform chucky_log
@@ -76,16 +76,11 @@ if(nlohmann_json_FOUND)
         stream-pure-hcs-acquisition
         stream-mixed-flat-and-hcs-acquisition
         stream-with-ragged-final-shard
+        stream-raw-to-s3
+        stream-named-array-to-s3
+        stream-compressed-to-s3
+        stream-append-nullptr
     )
-    # Excluded: stream-append-nullptr (depends on miniocpp)
-
-    # S3 tests depend on miniocpp/client.h from the original acquire-zarr build.
-    # Excluded until the shim's S3 path is implemented and tests are adapted.
-    # set(s3_tests
-    #     stream-raw-to-s3
-    #     stream-named-array-to-s3
-    #     stream-compressed-to-s3
-    # )
 
     foreach(name ${integration_tests})
         set(tgt "shim-test-${name}")
@@ -95,6 +90,7 @@ if(nlohmann_json_FOUND)
         target_compile_definitions(${tgt} PRIVATE "TEST=\"${tgt}\"")
         target_include_directories(${tgt} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tests/integration
         )
         target_link_libraries(${tgt} PRIVATE
             acquire-zarr-chucky-cpu

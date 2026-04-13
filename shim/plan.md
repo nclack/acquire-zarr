@@ -2,7 +2,7 @@
 
 ## Current State (2026-04-13)
 
-All 13 integration tests passing:
+All 17 integration tests passing (all original acquire-zarr tests ported):
 - `stream-raw-to-filesystem` — PASS
 - `stream-named-array-to-filesystem` — PASS
 - `stream-compressed-to-filesystem` (blosc) — PASS
@@ -12,13 +12,18 @@ All 13 integration tests passing:
 - `stream-multi-frame-append` — PASS
 - `stream-multiscale-trivial-3rd-dim` — PASS
 - `stream-multiple-arrays-to-filesystem` — PASS
+- `estimate-memory-usage` — PASS
 - `stream-pure-hcs-acquisition` — PASS
 - `stream-mixed-flat-and-hcs-acquisition` — PASS
-- `estimate-memory-usage` — PASS
 - `stream-with-ragged-final-shard` — PASS
+- `stream-raw-to-s3` — PASS (via minio in docker-compose)
+- `stream-named-array-to-s3` — PASS
+- `stream-compressed-to-s3` — PASS
+- `stream-append-nullptr` — PASS (tests both filesystem and S3)
 
 Ported shim to chucky's public API (store → zarr_array/ngff_multiscale).
 Pool management removed — each array/multiscale creates its own pool internally.
+S3 store support wired via chucky's `store_s3_create` (aws-c-s3).
 HCS support fully wired: plate/well/FOV metadata, per-FOV multiscale sinks, data routing.
 
 ## Chucky submodule
@@ -79,6 +84,7 @@ Implemented in chucky via #70 (fix scale factors) and #74 (fix epoch LOD shard g
 ## Remaining Work
 
 No known test failures. All shim API functions implemented.
+All 17 original acquire-zarr integration tests ported and passing.
 
 ## Files
 
