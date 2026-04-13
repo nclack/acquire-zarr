@@ -83,15 +83,34 @@ Implemented in chucky via #70 (fix scale factors) and #74 (fix epoch LOD shard g
 
 ## Remaining Work
 
-No known test failures. All shim API functions implemented.
-All 17 original acquire-zarr integration tests ported and passing.
+### Python wheels
+
+The pybind11 bindings (`python/acquire-zarr-py.cpp`) are backend-agnostic — they
+only call `acquire.zarr.h` functions, so they work with any backend.
+
+**Phase 1 — CPU wheel** (done):
+- `shim/pybind/CMakeLists.txt` — pybind11 module linked against `acquire-zarr-chucky-cpu`
+- `shim/CMakeLists.txt` — `BUILD_PYTHON` option gates the pybind subdirectory
+- `shim/python/pyproject.toml` + `setup.py` — package `acquire-zarr-cpu`, no vcpkg
+- `shim/Dockerfile` — `wheel-deps` stage builds lz4/zstd/blosc/aws from source as
+  static+PIC libs; `wheel-build` stage runs `python -m build`; `wheel` stage exports `.whl`
+- Build: `docker build -f shim/Dockerfile --target wheel --output wheels .`
+- Tested: import, create stream, write frames, verify Zarr output
+- Runtime dep: `libgomp1` (OpenMP)
+- Fixed `python/acquire-zarr-py.cpp` lambda deleter → struct for C++17 compat
+
+**Phase 2 — GPU wheel** (after `multiarray_gpu` in chucky):
+1. `shim/shim_backend.h` — preprocessor dispatch (CPU/GPU function names + types)
+2. Refactor `shim_internal.h` / `shim.c` to use generic macros (7 call sites)
+3. `acquire-zarr-chucky-gpu` CMake target (links GPU `stream` instead of `stream_cpu`)
+4. `shim/Dockerfile.gpu` — CUDA base image + nvcomp, package `acquire-zarr-gpu`
 
 ## Files
 
 ```
 shim/
   CMakeLists.txt          # builds chucky, shim lib, integration tests
-  Dockerfile              # CUDA base (for Docker builds)
+  Dockerfile              # CPU build/test + wheel stages
   docker-compose.yml      # MinIO + test service
   README.md               # build/test docs
   plan.md                 # this file
@@ -99,6 +118,11 @@ shim/
   shim_internal.h         # ZarrStream_s, shim_array (with store/plates)
   shim_convert.h/.c       # type conversion (dims, ngff_axes, codec, dtype)
   shim_sink.h/.c          # discriminated union sink (ARRAY + MULTISCALE + NONE)
+  pybind/
+    CMakeLists.txt          # pybind11 module linked against shim
+  python/
+    pyproject.toml          # wheel metadata (acquire-zarr-cpu)
+    setup.py                # CMake-driven wheel build
   compat/
     logger.hh/.cpp/.types.h  # C++ logger for test macro compat
   chucky/                 # submodule

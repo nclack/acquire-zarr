@@ -15,9 +15,13 @@
 namespace py = pybind11;
 
 namespace {
-auto ZarrStreamDeleter = [](ZarrStream_s* stream) {
-    if (stream) {
-        ZarrStream_destroy(stream);
+struct ZarrStreamDeleter
+{
+    void operator()(ZarrStream_s* stream) const
+    {
+        if (stream) {
+            ZarrStream_destroy(stream);
+        }
     }
 };
 
@@ -1336,7 +1340,7 @@ class PyZarrStream
 
   private:
     using ZarrStreamPtr =
-      std::unique_ptr<ZarrStream, decltype(ZarrStreamDeleter)>;
+      std::unique_ptr<ZarrStream, ZarrStreamDeleter>;
 
     ZarrStreamPtr stream_;
 
@@ -1355,7 +1359,7 @@ class PyZarrStream
 
         auto* stream_settings = settings.to_settings();
         stream_ =
-          ZarrStreamPtr(ZarrStream_create(stream_settings), ZarrStreamDeleter);
+          ZarrStreamPtr(ZarrStream_create(stream_settings));
         if (!stream_) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to create Zarr stream");
             throw py::error_already_set();

@@ -4,6 +4,8 @@ project(acquire-zarr-shim LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+option(BUILD_PYTHON "Build Python bindings" OFF)
+
 enable_testing()
 include(CTest)
 
@@ -41,6 +43,12 @@ target_compile_definitions(acquire-zarr-chucky-cpu PRIVATE
 set_target_properties(acquire-zarr-chucky-cpu PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
+
+# --- Python bindings -----------------------------------------------------
+
+if(BUILD_PYTHON)
+    add_subdirectory(pybind)
+endif()
 
 # --- logger compat lib for integration test macros -----------------------
 
