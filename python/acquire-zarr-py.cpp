@@ -7,6 +7,7 @@
 #include <pybind11/stl_bind.h>
 
 #include "acquire.zarr.h"
+#include "chucky_log.h"
 
 #ifdef _DEBUG
 #include <crtdbg.h>
@@ -15,6 +16,45 @@
 namespace py = pybind11;
 
 namespace {
+
+// Route chucky log events into Python's `logging` module. Callbacks fire on
+// whichever thread produced the log line, so the GIL must be acquired before
+// any Python call. Must not invoke chucky log macros (would recurse).
+void
+chucky_to_python_logging(const chucky_log_event* ev, void* /*udata*/)
+{
+    int pylevel;
+    switch (ev->level) {
+        case CHUCKY_LOG_TRACE:
+        case CHUCKY_LOG_DEBUG:
+            pylevel = 10;
+            break;
+        case CHUCKY_LOG_INFO:
+            pylevel = 20;
+            break;
+        case CHUCKY_LOG_WARN:
+            pylevel = 30;
+            break;
+        case CHUCKY_LOG_ERROR:
+            pylevel = 40;
+            break;
+        case CHUCKY_LOG_FATAL:
+        default:
+            pylevel = 50;
+            break;
+    }
+
+    py::gil_scoped_acquire gil;
+    try {
+        static py::object logger =
+          py::module_::import("logging").attr("getLogger")("acquire_zarr");
+        logger.attr("log")(
+          pylevel, "%s:%d: %s", ev->file, ev->line, ev->msg);
+    } catch (...) {
+        // Never propagate Python exceptions out of a C callback.
+    }
+}
+
 struct ZarrStreamDeleter
 {
     void operator()(ZarrStream_s* stream) const
@@ -2322,4 +2362,15 @@ PYBIND11_MODULE(acquire_zarr, m)
         std::cerr << "Warning: Failed to set initial log level: "
                   << Zarr_get_status_message(init_status) << std::endl;
     }
+
+    // Route chucky events into Python `logging` and silence the default
+    // stderr sink. Users control verbosity via
+    // logging.getLogger("acquire_zarr").setLevel(...); Zarr_set_log_level
+    // still works but only gates the (now silenced) stderr sink.
+    py::module_::import("logging")
+      .attr("getLogger")("acquire_zarr")
+      .attr("addHandler")(py::module_::import("logging").attr("NullHandler")());
+    chucky_log_add_callback(
+      chucky_to_python_logging, nullptr, CHUCKY_LOG_TRACE);
+    chucky_log_set_quiet(1);
 }

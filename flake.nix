@@ -4,9 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    claude-code.url = "github:sadjow/claude-code-nix";
+    claude-code.inputs.nixpkgs.follows = "nixpkgs";
+    claude-code.inputs.flake-utils.follows = "flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, claude-code }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -23,8 +26,10 @@
             pkg-config
 
             # Development tools
+            awscli2
             lldb
             clang-tools
+            claude-code.packages.${system}.default
             cmake-language-server
             cmake-format
             gh
