@@ -31,6 +31,8 @@ else()
     target_link_libraries(acquire_zarr PRIVATE acquire-zarr-chucky-cpu chucky_log)
 endif()
 
+target_compile_definitions(acquire_zarr PRIVATE ACQUIRE_ZARR_WITH_CHUCKY_LOG=1)
+
 set_target_properties(acquire_zarr PROPERTIES
     OUTPUT_NAME "__init__"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"

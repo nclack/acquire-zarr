@@ -7,7 +7,10 @@
 #include <pybind11/stl_bind.h>
 
 #include "acquire.zarr.h"
+
+#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG
 #include "chucky_log.h"
+#endif
 
 #ifdef _DEBUG
 #include <crtdbg.h>
@@ -17,6 +20,7 @@ namespace py = pybind11;
 
 namespace {
 
+#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG
 // Route chucky log events into Python's `logging` module. Callbacks fire on
 // whichever thread produced the log line, so the GIL must be acquired before
 // any Python call. Must not invoke chucky log macros (would recurse).
@@ -54,6 +58,7 @@ chucky_to_python_logging(const chucky_log_event* ev, void* /*udata*/)
         // Never propagate Python exceptions out of a C callback.
     }
 }
+#endif
 
 struct ZarrStreamDeleter
 {
@@ -2363,6 +2368,7 @@ PYBIND11_MODULE(acquire_zarr, m)
                   << Zarr_get_status_message(init_status) << std::endl;
     }
 
+#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG
     // Route chucky events into Python `logging` and silence the default
     // stderr sink. Users control verbosity via
     // logging.getLogger("acquire_zarr").setLevel(...); Zarr_set_log_level
@@ -2373,4 +2379,5 @@ PYBIND11_MODULE(acquire_zarr, m)
     chucky_log_add_callback(
       chucky_to_python_logging, nullptr, CHUCKY_LOG_TRACE);
     chucky_log_set_quiet(1);
+#endif
 }
