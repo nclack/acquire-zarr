@@ -45,6 +45,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && /tmp/aws/install \
     && rm -rf /tmp/awscliv2.zip /tmp/aws
 
+# uv for chucky's test_ome_validate (ome-zarr validator invocation).
+RUN wget -qO- https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv
+
 FROM deps AS build
 WORKDIR /src
 COPY . .

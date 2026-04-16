@@ -21,4 +21,10 @@ jobs:
           submodules: true
 
       - name: Build and test
-        run: docker build -f shim/Dockerfile --target test .
+        working-directory: shim
+        run: docker compose run --rm test
+
+      - name: Cleanup
+        if: always()
+        working-directory: shim
+        run: docker compose down

@@ -192,6 +192,7 @@ longer affects output.
   (`stat(store_path/zarr.json)` for FS, HEAD for S3). Chucky is
   overwrite-by-default at the shard level, so the only missing behavior is
   the guard; no per-shard scan needed.
+- gpu-dependent tests once cpu testing looks good
 
 ## CPU wheel (Phase 1 — done)
 
