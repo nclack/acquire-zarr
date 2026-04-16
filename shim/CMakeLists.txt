@@ -17,11 +17,15 @@ add_subdirectory(chucky)
 
 # --- shim library --------------------------------------------------------
 
-add_library(acquire-zarr-chucky-cpu STATIC
-    shim.c
-    shim_convert.c
-    shim_sink.c
+set(shim_sources shim.c shim_convert.c shim_sink.c)
+set(shim_non_backend_libs
+    store_fs store_s3 zarr_array zarr_group ngff_multiscale
+    hcs hcs_metadata
+    dimension writer stream_config
+    platform chucky_log
 )
+
+add_library(acquire-zarr-chucky-cpu STATIC ${shim_sources})
 
 target_include_directories(acquire-zarr-chucky-cpu
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -30,10 +34,7 @@ target_include_directories(acquire-zarr-chucky-cpu
 
 target_link_libraries(acquire-zarr-chucky-cpu PRIVATE
     stream_cpu multiarray_cpu
-    store_fs store_s3 zarr_array zarr_group ngff_multiscale
-    hcs hcs_metadata
-    dimension writer stream_config
-    platform chucky_log
+    ${shim_non_backend_libs}
 )
 
 target_compile_definitions(acquire-zarr-chucky-cpu PRIVATE
@@ -43,6 +44,29 @@ target_compile_definitions(acquire-zarr-chucky-cpu PRIVATE
 set_target_properties(acquire-zarr-chucky-cpu PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
+
+if(CHUCKY_ENABLE_GPU)
+    add_library(acquire-zarr-chucky-gpu STATIC ${shim_sources})
+
+    target_include_directories(acquire-zarr-chucky-gpu
+        PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(acquire-zarr-chucky-gpu PRIVATE
+        stream multiarray_gpu
+        ${shim_non_backend_libs}
+    )
+
+    target_compile_definitions(acquire-zarr-chucky-gpu PRIVATE
+        ACQUIRE_ZARR_API_VERSION="0.6.0"
+        SHIM_BACKEND_GPU=1
+    )
+
+    set_target_properties(acquire-zarr-chucky-gpu PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
 
 # --- Python bindings -----------------------------------------------------
 

@@ -1,9 +1,12 @@
 #pragma once
 
 #include "acquire.zarr.h"
+#include "shim_backend.h"
 #include "shim_sink.h"
 
-struct tile_stream_cpu;
+#include "types.stream.h"
+
+struct multiarray_writer;
 struct store;
 struct hcs_plate;
 
@@ -13,9 +16,9 @@ struct shim_array
     struct dimension* dims;
     struct ngff_axis* axes;
     uint8_t rank;
-    struct tile_stream_cpu* stream;
     struct shim_sink sink;
     size_t frame_bytes;
+    struct tile_stream_configuration config;
 };
 
 struct ZarrStream_s
@@ -25,6 +28,9 @@ struct ZarrStream_s
     size_t n_plates;
     struct shim_array* arrays;
     size_t n_arrays;
+    multiarray_tile_stream_t* multi_stream;
+    struct multiarray_writer* writer;
     char* store_path;
     size_t estimated_memory;
+    int max_threads;
 };

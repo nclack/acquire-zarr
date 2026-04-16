@@ -25,7 +25,11 @@ target_include_directories(acquire_zarr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
 
-target_link_libraries(acquire_zarr PRIVATE acquire-zarr-chucky-cpu)
+if(CHUCKY_ENABLE_GPU)
+    target_link_libraries(acquire_zarr PRIVATE acquire-zarr-chucky-gpu chucky_log)
+else()
+    target_link_libraries(acquire_zarr PRIVATE acquire-zarr-chucky-cpu chucky_log)
+endif()
 
 set_target_properties(acquire_zarr PROPERTIES
     OUTPUT_NAME "__init__"
