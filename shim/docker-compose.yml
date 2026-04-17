@@ -19,9 +19,9 @@ services:
       dockerfile: shim/Dockerfile
       target: build
       cache_from:
-        - type=gha
+        - type=gha,ignore-error=true
       cache_to:
-        - type=gha,mode=max
+        - type=gha,mode=max,ignore-error=true
     depends_on:
       minio:
         condition: service_healthy
