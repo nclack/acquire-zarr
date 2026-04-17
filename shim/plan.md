@@ -1,6 +1,6 @@
 # Shim Implementation Plan
 
-## Current State (2026-04-16)
+## Current State (2026-04-17)
 
 All 17 integration tests passing (all original acquire-zarr tests ported):
 - `stream-raw-to-filesystem` — PASS
@@ -45,8 +45,12 @@ is how production acquisitions should configure chunks.
 ## Chucky submodule
 
 On main, including GPU multiarray writer (#81), shared-LOD split (#82),
-CPU multiarray heap-overflow fixes (#83), and the public log header (#87).
+CPU multiarray heap-overflow fixes (#83), the public log header (#87),
+the `zarr_write_attribute` API (#88), and `store_has_existing_data` (#89).
 The two local fixes previously listed here have been upstreamed.
+
+#88 and #89 add the primitives needed to close divergences #5 and #6
+respectively; wiring on the shim side is still pending (see Remaining Work).
 
 ## Architecture
 
@@ -143,25 +147,26 @@ Returns a value set once at stream create time from
 as well as flat arrays). This is an upper bound, not runtime-tracked
 usage, since chucky allocates pools once at create and they don't grow.
 
-### 5. `ZarrStream_write_custom_metadata` — not implemented (TODO)
+### 5. `ZarrStream_write_custom_metadata` — primitive ready, shim wiring pending
 
-Returns `ZarrStatusCode_NotYetImplemented`. Needs a chucky-side API to write
-JSON under a given `<array_key>/zarr.json`'s `attributes` with a
+Still returns `ZarrStatusCode_NotYetImplemented`. Chucky now exposes
+`zarr_write_attribute` (#88), which is the primitive the shim needs to
+write JSON under a given `<array_key>/zarr.json`'s `attributes` with a
 caller-chosen inner key (`ome` is reserved). This is per-array (array_key
-selects the target; NULL means the root). Open as a chucky issue and wire
-from the shim.
+selects the target; NULL means the root). Wire from `shim.c`.
 
-### 6. `settings->overwrite` — ignored (TODO)
+### 6. `settings->overwrite` — primitive ready, shim wiring pending
 
 Chucky is overwrite-by-default — individual shard writes replace existing
 files in place — so the functional behavior when `overwrite=true` works
 today. The missing piece is the **`overwrite=false` guard**: refuse with
 `ZarrStatusCode_WillNotOverwrite` if the store already has data.
 
-Plan: cheap coarse check at create time — `stat(store_path + "/zarr.json")`
-for filesystem, or a single HEAD on the root metadata key for S3. O(1),
-runs once per stream create. Baseline's stricter "scan and remove" on
-overwrite=true isn't required since chucky clobbers per-shard anyway.
+Chucky now exposes `store_has_existing_data` (#89) — an O(1) existence
+check against the store's root metadata key that works for both filesystem
+and S3 backends. Wire from `shim.c` at stream-create time and return
+`WillNotOverwrite` when the guard trips. Baseline's stricter "scan and
+remove" on overwrite=true isn't required since chucky clobbers per-shard.
 
 ### 7. No frame queue (intentional)
 
@@ -193,14 +198,11 @@ longer affects output.
 
 ### Nice-to-haves
 
-- Wire `ZarrStream_write_custom_metadata` to chucky's attributes path (file
-  a chucky issue first — the write-to-attributes-key primitive is missing).
-  API is per-array: `array_key` selects target (NULL → root); `metadata_key`
-  is the inner attributes key; `ome` is reserved.
-- Honor `settings->overwrite=false` via a coarse existence check
-  (`stat(store_path/zarr.json)` for FS, HEAD for S3). Chucky is
-  overwrite-by-default at the shard level, so the only missing behavior is
-  the guard; no per-shard scan needed.
+- Wire `ZarrStream_write_custom_metadata` to chucky's `zarr_write_attribute`
+  (#88). API is per-array: `array_key` selects target (NULL → root);
+  `metadata_key` is the inner attributes key; `ome` is reserved.
+- Honor `settings->overwrite=false` via chucky's `store_has_existing_data`
+  (#89). Call at stream create; return `WillNotOverwrite` on hit.
 - gpu-dependent tests once cpu testing looks good
 
 ## CPU wheel (Phase 1 — done)
@@ -245,7 +247,9 @@ longer affects output.
   PRs to `main`. The `test` service in `shim/docker-compose.yml` has no
   GPU device requirement (shim has no GPU tests yet). `uv` is installed
   in `shim/Dockerfile` so chucky's `test_ome_validate` also works when
-  someone runs `docker build --target test` locally.
+  someone runs `docker build --target test` locally. The build uses
+  BuildKit's GHA layer cache (`cache_from`/`cache_to: type=gha`) so the
+  from-source aws-c-* / lz4 / zstd / blosc layers are reused across runs.
 - `.github/workflows/wheels.yml` — two parallel jobs (`cpu-wheel`,
   `gpu-wheel`) that build the Dockerfiles and upload the resulting `.whl`
   files as workflow artifacts. Triggers: push to `main`, push to `shim`,
@@ -254,6 +258,27 @@ longer affects output.
   `#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG`, which only `shim/pybind/CMakeLists.txt`
   defines — so the baseline `build.yml` / `benchmark.yml` / `release.yml`
   pipelines that compile the shared pybind source without chucky still work.
+
+### Cross-cutting CI speedups
+
+- `VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"` + the GHA cache env
+  exporter step in every vcpkg-using workflow (`test.yml`, `benchmark.yml`,
+  `build.yml`, `release.yml`) so vcpkg's built packages are cached across
+  jobs and runs.
+- `actions/cache` on the vcpkg clone (excluding `downloads/`, `buildtrees/`,
+  `packages/`, `installed/`) keyed by `vcpkg-<tag>-<os>-<arch>`, so the
+  bootstrap itself is reused across runs.
+- Python install in CI uses `astral-sh/setup-uv@v4` + `uv pip install
+  --system` in place of `actions/setup-python@v5` + `pip` — `setup-uv`
+  provides Python too, so `setup-python` is gone from every workflow.
+- Python project install uses `--no-build-isolation` so the PEP 517
+  isolated venv doesn't re-download build deps per job; `ninja`,
+  `setuptools`, and `wheel` are pre-installed alongside `pybind11[global]`
+  and `cmake<4.0.0`.
+- `tests/integration/s3-test-helpers.hh` has two backends selected by
+  `-DS3_TEST_HELPERS_USE_AWS_CLI`: miniocpp (default, used by the baseline
+  vcpkg build on all platforms incl. Windows) and `aws` CLI via `popen`
+  (used by the shim Linux-docker build, which intentionally avoids vcpkg).
 
 ## Files
 
