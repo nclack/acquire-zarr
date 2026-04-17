@@ -119,7 +119,10 @@ if(nlohmann_json_FOUND)
         add_executable(${tgt}
             ${CMAKE_CURRENT_SOURCE_DIR}/../tests/integration/${name}.cpp
         )
-        target_compile_definitions(${tgt} PRIVATE "TEST=\"${tgt}\"")
+        target_compile_definitions(${tgt} PRIVATE
+            "TEST=\"${tgt}\""
+            S3_TEST_HELPERS_USE_AWS_CLI
+        )
         target_include_directories(${tgt} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../include
             ${CMAKE_CURRENT_SOURCE_DIR}/../tests/integration
