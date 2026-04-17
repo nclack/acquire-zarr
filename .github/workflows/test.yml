@@ -228,6 +228,7 @@ jobs:
   test-python:
     name: Test Python on ${{ matrix.platform }}
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -296,6 +297,12 @@ jobs:
         run: uv pip install --no-build-isolation ".[testing]"
         shell: bash
 
-      - name: Run tests
+      - name: Run tests (POSIX)
+        if: runner.os != 'Windows'
+        run: uv run --no-sync pytest -v --timeout=120 --timeout-method=signal -o faulthandler_timeout=120
+        shell: bash
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
         run: uv run --no-sync pytest -v --timeout=120 --timeout-method=thread -o faulthandler_timeout=120
         shell: bash
