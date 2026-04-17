@@ -68,10 +68,26 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg bootstrap
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg
+            !vcpkg/downloads
+            !vcpkg/buildtrees
+            !vcpkg/packages
+            !vcpkg/installed
+          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
+
       - name: Install vcpkg
         run: |
-          git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          cd vcpkg && ./bootstrap-vcpkg.sh
+          if [ ! -d vcpkg ]; then
+            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
+          fi
+          cd vcpkg
+          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
+            ./bootstrap-vcpkg.sh
+          fi
           echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
           echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
           ./vcpkg integrate install
@@ -167,11 +183,28 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Cache vcpkg bootstrap
+        if: ${{ !startsWith(matrix.platform, 'ubuntu') }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg
+            !vcpkg/downloads
+            !vcpkg/buildtrees
+            !vcpkg/packages
+            !vcpkg/installed
+          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
+
       - name: Install vcpkg
         if: ${{ !startsWith(matrix.platform, 'ubuntu') }} # vcpkg will be installed in the manylinux image for Ubuntu builds
         run: |
-          git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          cd vcpkg && ./bootstrap-vcpkg.sh
+          if [ ! -d vcpkg ]; then
+            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
+          fi
+          cd vcpkg
+          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
+            ./bootstrap-vcpkg.sh
+          fi
           echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
           echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
           ./vcpkg integrate install
