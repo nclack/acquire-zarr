@@ -268,9 +268,11 @@ longer affects output.
 - `actions/cache` on the vcpkg clone (excluding `downloads/`, `buildtrees/`,
   `packages/`, `installed/`) keyed by `vcpkg-<tag>-<os>-<arch>`, so the
   bootstrap itself is reused across runs.
-- Python install in CI uses `astral-sh/setup-uv@v4` + `uv pip install
-  --system` in place of `actions/setup-python@v5` + `pip` — `setup-uv`
-  provides Python too, so `setup-python` is gone from every workflow.
+- Python install in CI uses `actions/setup-python@v5` + `astral-sh/setup-uv@v4`
+  with `uv pip install --system` replacing `pip install`. setup-uv alone
+  can install Python, but its uv-managed Python isn't accepted by
+  `uv pip install --system` (which requires an OS-installed Python), so
+  we keep both actions and use uv just as a faster installer.
 - Python project install uses `--no-build-isolation` so the PEP 517
   isolated venv doesn't re-download build deps per job; `ninja`,
   `setuptools`, and `wheel` are pre-installed alongside `pybind11[global]`

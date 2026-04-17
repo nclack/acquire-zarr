@@ -205,10 +205,13 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ env.MINIO_SECRET_KEY }}
         run: ctest -C ${{env.BUILD_TYPE}} -L s3 --output-on-failure
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
         run: uv pip install --system "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel numpy pytest
@@ -239,10 +242,13 @@ jobs:
           submodules: true
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13.3"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
-        with:
-          python-version: "3.13"
 
       - name: Export GitHub Actions cache env for vcpkg
         uses: actions/github-script@v7
