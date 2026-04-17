@@ -1388,9 +1388,6 @@ ZarrStream_append(ZarrStream* stream,
         frame = zeros;
     }
 
-    // Feed the writer in a retry loop: the multiarray writer can return
-    // not_flushable when switching arrays mid-epoch — back off and retry
-    // after consumable progress on the target array.
     const char* cur = (const char*)frame;
     const char* end = cur + bytes_in;
     ZarrStatusCode rc = ZarrStatusCode_Success;
@@ -1401,23 +1398,24 @@ ZarrStream_append(ZarrStream* stream,
           stream->writer->update(stream->writer, array_index, s);
 
         const char* rest_beg = (const char*)r.rest.beg;
-        if (!rest_beg) {
-            // fully consumed
-            cur = end;
-        } else {
-            cur = rest_beg;
-        }
+        const char* next = rest_beg ? rest_beg : end;
 
-        if (r.error == multiarray_writer_ok) {
-            continue;
-        }
         if (r.error == multiarray_writer_finished) {
-            // Capacity reached; stop consuming.
+            cur = next;
             break;
         }
-        // fail or not_flushable
-        rc = ZarrStatusCode_InternalError;
-        break;
+        if (r.error != multiarray_writer_ok) {
+            // fail or not_flushable: caller switched arrays mid-epoch, or
+            // the writer returned an internal error. Stop consuming.
+            rc = ZarrStatusCode_InternalError;
+            break;
+        }
+        if (next <= cur) {
+            // Writer reported ok without advancing — guard against a spin.
+            rc = ZarrStatusCode_InternalError;
+            break;
+        }
+        cur = next;
     }
 
     size_t consumed = (size_t)(cur - (const char*)frame);
