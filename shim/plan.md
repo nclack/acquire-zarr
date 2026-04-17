@@ -46,8 +46,9 @@ is how production acquisitions should configure chunks.
 
 On main, including GPU multiarray writer (#81), shared-LOD split (#82),
 CPU multiarray heap-overflow fixes (#83), the public log header (#87),
-the `zarr_write_attribute` API (#88), and `store_has_existing_data` (#89).
-The two local fixes previously listed here have been upstreamed.
+the `zarr_write_attribute` API (#88), `store_has_existing_data` (#89),
+and idempotent multiarray flush (#91). The two local fixes previously
+listed here have been upstreamed.
 
 #88 and #89 add the primitives needed to close divergences #5 and #6
 respectively; wiring on the shim side is still pending (see Remaining Work).
