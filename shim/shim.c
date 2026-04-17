@@ -644,7 +644,7 @@ write_intermediate_groups(struct store* store, const char* key)
             store->mkdirs(store, buf);
             char group_key[4096];
             snprintf(group_key, sizeof(group_key), "%s/zarr.json", buf);
-            zarr_write_group(store, group_key, NULL);
+            zarr_group_write_with_raw_attrs(store, group_key, "{}");
             buf[i] = '/';
         }
     }
@@ -792,7 +792,7 @@ create_hcs_arrays(struct ZarrStream_s* stream,
         // to create the hierarchy ourselves.
 
         // Write root group (if not already written)
-        zarr_write_group(stream->store, "zarr.json", NULL);
+        zarr_group_write_with_raw_attrs(stream->store, "zarr.json", "{}");
 
         // Write plate group with attributes
         const char* plate_path = zplate->path ? zplate->path : "plate";
@@ -818,7 +818,7 @@ create_hcs_arrays(struct ZarrStream_s* stream,
 
             char key[4096];
             snprintf(key, sizeof(key), "%s/zarr.json", plate_path);
-            int rc = zarr_write_group(stream->store, key, attrs);
+            int rc = zarr_group_write_with_raw_attrs(stream->store, key, attrs);
             free(attrs);
             if (rc != 0) {
                 return 0;
@@ -839,7 +839,7 @@ create_hcs_arrays(struct ZarrStream_s* stream,
                 char key[4096];
                 snprintf(
                   key, sizeof(key), "%s/%s/zarr.json", plate_path, row_name);
-                zarr_write_group(stream->store, key, NULL);
+                zarr_group_write_with_raw_attrs(stream->store, key, "{}");
             }
 
             // Well group with attributes
@@ -865,7 +865,7 @@ create_hcs_arrays(struct ZarrStream_s* stream,
                          plate_path,
                          row_name,
                          col_name);
-                if (zarr_write_group(stream->store, key, attrs) != 0) {
+                if (zarr_group_write_with_raw_attrs(stream->store, key, attrs) != 0) {
                     return 0;
                 }
             }
@@ -1236,7 +1236,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
     }
 
     // Write root group
-    zarr_write_group(stream->store, "zarr.json", NULL);
+    zarr_group_write_with_raw_attrs(stream->store, "zarr.json", "{}");
 
     // Create flat arrays
     for (size_t i = 0; i < settings->array_count; ++i) {

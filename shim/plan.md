@@ -66,7 +66,7 @@ The shim uses chucky's public API:
 
 Internal APIs used only where needed:
 - `zarr/store.h` — for `store->mkdirs()` in HCS hierarchy and intermediate groups
-- `zarr/zarr_group.h` — for `zarr_write_group()`
+- `zarr/zarr_group.h` — for `zarr_group_write_with_raw_attrs()`
 - `zarr/json_writer.h` — for HCS metadata JSON helpers
 
 HCS is built directly in the shim (not using chucky's `hcs_plate_create`) to support
