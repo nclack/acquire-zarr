@@ -8,6 +8,7 @@ on:
 
 env:
   BUILD_TYPE: Release
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
   build:
@@ -59,6 +60,13 @@ jobs:
           tar -xzf cmake-3.31.8-linux-aarch64.tar.gz
           sudo mv cmake-3.31.8-linux-aarch64 /opt/cmake
           echo "/opt/cmake/bin" >> $GITHUB_PATH
+
+      - name: Export GitHub Actions cache env for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Install vcpkg
         run: |
@@ -150,6 +158,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Export GitHub Actions cache env for vcpkg
+        if: ${{ !startsWith(matrix.platform, 'ubuntu') }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Install vcpkg
         if: ${{ !startsWith(matrix.platform, 'ubuntu') }} # vcpkg will be installed in the manylinux image for Ubuntu builds
