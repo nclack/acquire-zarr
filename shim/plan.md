@@ -22,8 +22,9 @@ All 17 integration tests passing (all original acquire-zarr tests ported):
 - `stream-append-nullptr` — PASS (tests both filesystem and S3)
 
 Ported shim to chucky's public API (store → zarr_array/ngff_multiscale).
-All arrays coordinated by a single `multiarray_tile_stream_cpu` with shared
-pools sized to the maximum across arrays (constant memory for N arrays).
+All arrays coordinated by a single `multiarray_tile_stream` (CPU or GPU,
+selected at compile time via `shim_backend.h`) with shared pools sized to
+the maximum across arrays (constant memory for N arrays).
 S3 store support wired via chucky's `store_s3_create` (aws-c-s3).
 HCS support fully wired: plate/well/FOV metadata, per-FOV multiscale sinks, data routing.
 Logging wired to chucky's public `chucky_log.h` API; Python module routes
@@ -32,7 +33,7 @@ silences chucky's default stderr sink on import (see divergence #9).
 
 ### Multiarray constraint (HCS tests updated)
 
-`multiarray_tile_stream_cpu` requires that switching arrays happens at an
+The multiarray tile stream requires that switching arrays happens at an
 **epoch boundary** (so shared buffers can be reused without flushing partial
 state). A write of one (y, x) frame to a FOV must equal one epoch:
 `epoch_elements = chunks_per_epoch * chunk_elements = frame_size`.
@@ -53,8 +54,10 @@ The shim uses chucky's public API:
 - **store** (`store_fs_create`) — filesystem key-value store
 - **zarr_array** (`zarr_array_create`) — non-multiscale arrays (shard geometry computed internally)
 - **ngff_multiscale** (`ngff_multiscale_create`) — multiscale arrays (auto LOD levels, writes NGFF group metadata)
-- **multiarray_tile_stream_cpu** — streaming pipeline for N arrays with shared
-  pools (chunk tiling, LOD pyramid, compression). Switching between arrays
+- **multiarray tile stream** — streaming pipeline for N arrays with shared
+  pools (chunk tiling, LOD pyramid, compression). CPU via
+  `multiarray_tile_stream_cpu`, GPU via `multiarray_tile_stream_gpu`;
+  selected at compile time by `shim_backend.h`. Switching between arrays
   only valid at epoch boundaries.
 
 Internal APIs used only where needed:
@@ -105,10 +108,16 @@ Chucky's LOD rules (implemented via #70, #74, #fef0e1f):
 Integration tests `stream-2d-multiscale`, `stream-3d-multiscale`,
 `stream-multiscale-trivial-3rd-dim`, and LOD2 shape in
 `stream-multiple-arrays-to-filesystem` were updated to expect this behavior.
+Three of those — `stream-2d-multiscale-to-filesystem`,
+`stream-3d-multiscale-to-filesystem`, and
+`stream-multiple-arrays-to-filesystem` — cannot pass against the baseline
+library and are therefore **disabled in `tests/integration/CMakeLists.txt`**
+(commented out with a pointer to this divergence). They are still exercised
+by the shim via `shim/CMakeLists.txt`.
 
 ### 2. Multiarray epoch-boundary constraint
 
-`multiarray_tile_stream_cpu` shares chunk/compressed/LUT pools across N arrays
+The multiarray tile stream shares chunk/compressed/LUT pools across N arrays
 (constant-memory design for 100s–1000s of arrays). Switching the active array
 mid-epoch is rejected (`not_flushable`).
 
@@ -228,17 +237,29 @@ longer affects output.
 - Build: `docker build -f shim/Dockerfile.gpu --target wheel --output wheels-gpu .`
 - Integration tests still link CPU only (no GPU runner in CI).
 
-## CI (wheels)
+## CI
 
+- `.github/workflows/test-shim.yml` — runs `docker compose run --rm test`
+  which brings up minio alongside the test container and invokes
+  `ctest -L shim` (only shim-labeled tests). Triggers: push to `main`,
+  PRs to `main`. The `test` service in `shim/docker-compose.yml` has no
+  GPU device requirement (shim has no GPU tests yet). `uv` is installed
+  in `shim/Dockerfile` so chucky's `test_ome_validate` also works when
+  someone runs `docker build --target test` locally.
 - `.github/workflows/wheels.yml` — two parallel jobs (`cpu-wheel`,
   `gpu-wheel`) that build the Dockerfiles and upload the resulting `.whl`
   files as workflow artifacts. Triggers: push to `main`, push to `shim`,
   manual `workflow_dispatch`. No publishing.
+- `python/acquire-zarr-py.cpp` gates its chucky log callback behind
+  `#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG`, which only `shim/pybind/CMakeLists.txt`
+  defines — so the baseline `build.yml` / `benchmark.yml` / `release.yml`
+  pipelines that compile the shared pybind source without chucky still work.
 
 ## Files
 
 ```
 .github/workflows/
+  test-shim.yml           # docker compose run --rm test (shim ctest via compose)
   wheels.yml              # cpu-wheel + gpu-wheel jobs, upload artifacts
 shim/
   CMakeLists.txt          # builds chucky, shim lib (cpu+gpu), integration tests
