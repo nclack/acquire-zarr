@@ -18,6 +18,10 @@ services:
       context: ..
       dockerfile: shim/Dockerfile
       target: build
+      cache_from:
+        - type=gha
+      cache_to:
+        - type=gha,mode=max
     depends_on:
       minio:
         condition: service_healthy
