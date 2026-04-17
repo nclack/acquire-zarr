@@ -44,10 +44,10 @@ jobs:
           submodules: true
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.13.3"
+          python-version: "3.13"
 
       - name: Export GitHub Actions cache env for vcpkg
         uses: actions/github-script@v7
@@ -87,10 +87,10 @@ jobs:
           brew install libomp
 
       - name: Install dependencies
-        run: python -m pip install -U pip "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel tensorstore click rich psutil
+        run: uv pip install --system "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel tensorstore click rich psutil
 
       - name: Build and install Python bindings
-        run: python -m pip install --no-build-isolation ".[testing]"
+        run: uv pip install --system --no-build-isolation ".[testing]"
 
       - name: Run benchmark
         run: python benchmarks/benchmark.py --nocompare --output benchmark-${{ matrix.platform }}-${{ github.sha }}.json
@@ -110,13 +110,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.13.3"
+          python-version: "3.13"
 
       - name: Install plotting dependencies
-        run: pip install matplotlib click
+        run: uv pip install --system matplotlib click
 
       - name: Download all benchmark artifacts
         uses: actions/download-artifact@v4
