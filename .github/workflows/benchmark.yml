@@ -44,13 +44,10 @@ jobs:
           submodules: true
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13.3"
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.13.3"
 
       - name: Export GitHub Actions cache env for vcpkg
         uses: actions/github-script@v7
@@ -90,13 +87,18 @@ jobs:
           brew install libomp
 
       - name: Install dependencies
-        run: uv pip install --system "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel tensorstore click rich psutil
+        run: |
+          uv venv
+          uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel tensorstore click rich psutil
+        shell: bash
 
       - name: Build and install Python bindings
-        run: uv pip install --system --no-build-isolation ".[testing]"
+        run: uv pip install --no-build-isolation ".[testing]"
+        shell: bash
 
       - name: Run benchmark
-        run: python benchmarks/benchmark.py --nocompare --output benchmark-${{ matrix.platform }}-${{ github.sha }}.json
+        run: uv run --no-sync python benchmarks/benchmark.py --nocompare --output benchmark-${{ matrix.platform }}-${{ github.sha }}.json
+        shell: bash
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -113,16 +115,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13.3"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
       - name: Install plotting dependencies
-        run: uv pip install --system matplotlib click
+        run: |
+          uv venv
+          uv pip install matplotlib click
+        shell: bash
 
       - name: Download all benchmark artifacts
         uses: actions/download-artifact@v4
@@ -132,7 +134,8 @@ jobs:
           merge-multiple: true
 
       - name: Generate plots
-        run: python benchmarks/plot_benchmarks.py --input-dir benchmark-results --output-prefix benchmark_comparison
+        run: uv run --no-sync python benchmarks/plot_benchmarks.py --input-dir benchmark-results --output-prefix benchmark_comparison
+        shell: bash
 
       - name: Upload plot
         uses: actions/upload-artifact@v4
