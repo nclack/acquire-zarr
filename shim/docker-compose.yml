@@ -19,9 +19,9 @@ services:
       dockerfile: shim/Dockerfile
       target: build
       cache_from:
-        - type=gha,ignore-error=true
+        - type=registry,ref=ghcr.io/acquire-project/acquire-zarr/shim-buildcache:latest
       cache_to:
-        - type=gha,mode=max,ignore-error=true
+        - type=registry,ref=ghcr.io/acquire-project/acquire-zarr/shim-buildcache:latest,mode=max,ignore-error=true
     depends_on:
       minio:
         condition: service_healthy
