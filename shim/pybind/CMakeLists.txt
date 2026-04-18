@@ -33,6 +33,8 @@ endif()
 
 target_compile_definitions(acquire_zarr PRIVATE ACQUIRE_ZARR_WITH_CHUCKY_LOG=1)
 
+target_compile_features(acquire_zarr PRIVATE cxx_std_20)
+
 set_target_properties(acquire_zarr PROPERTIES
     OUTPUT_NAME "__init__"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
