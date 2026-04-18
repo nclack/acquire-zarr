@@ -30,7 +30,9 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Tier 1 platforms: intel linux + windows. Must pass before tier 2 runs.
+  # Tier 1 platforms: intel linux + windows + macos-latest (arm).
+  # macos-latest is in tier 1 temporarily to debug a vcpkg openssl SDK
+  # header issue without waiting on the rest of tier 1 to clear first.
   test-tier1:
     name: Test on ${{ matrix.platform }}
     runs-on: ${{ matrix.platform }}
@@ -41,11 +43,14 @@ jobs:
         platform:
           - "ubuntu-latest"
           - "windows-latest"
+          - "macos-latest" # arm
         include:
           - platform: "ubuntu-latest"
             vcpkg_triplet: "x64-linux"
           - platform: "windows-latest"
             vcpkg_triplet: "x64-windows-static"
+          - platform: "macos-latest"
+            vcpkg_triplet: "arm64-osx"
     permissions:
       actions: write
 
@@ -59,9 +64,17 @@ jobs:
         shell: bash
         run: cmake --version
 
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
+
       - uses: ./.github/actions/setup-sccache
 
       - uses: ./.github/actions/setup-vcpkg
+
+      - name: Install OpenMP
+        if: startsWith(matrix.platform, 'macos')
+        run: brew install libomp
 
       - name: Configure CMake
         run: |
@@ -75,7 +88,7 @@ jobs:
         working-directory: ${{github.workspace}}/build
         run: ctest -C ${{env.BUILD_TYPE}} -L acquire-zarr --output-on-failure
 
-  # Tier 2 platforms: arm linux + macOS (arm + intel). Runs only if tier 1 passes.
+  # Tier 2 platforms: arm linux + macos-15-intel. Runs only if tier 1 passes.
   test-tier2:
     name: Test on ${{ matrix.platform }}
     needs: test-tier1
@@ -86,13 +99,10 @@ jobs:
       matrix:
         platform:
           - "ubuntu-24.04-arm"
-          - "macos-latest" # arm
           - "macos-15-intel" # x86_64
         include:
           - platform: "ubuntu-24.04-arm"
             vcpkg_triplet: "arm64-linux"
-          - platform: "macos-latest"
-            vcpkg_triplet: "arm64-osx"
           - platform: "macos-15-intel"
             vcpkg_triplet: "x64-osx"
     permissions:
@@ -107,6 +117,10 @@ jobs:
       - name: Check CMake version
         shell: bash
         run: cmake --version
+
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
 
       - uses: ./.github/actions/setup-sccache
 
@@ -222,6 +236,7 @@ jobs:
         platform:
           - "ubuntu-latest"
           - "windows-latest"
+          - "macos-latest" # arm — temporarily here while debugging vcpkg openssl SDK issue
 
     steps:
       - uses: actions/checkout@v4
@@ -234,7 +249,15 @@ jobs:
         with:
           python-version: "3.13.3"
 
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
+
       - uses: ./.github/actions/setup-vcpkg
+
+      - name: Install OpenMP
+        if: startsWith(matrix.platform, 'macos')
+        run: brew install libomp
 
       - uses: ./.github/actions/setup-sccache
         with:
@@ -270,7 +293,6 @@ jobs:
       matrix:
         platform:
           - "ubuntu-24.04-arm"
-          - "macos-latest" # arm
           - "macos-15-intel" # x86_64
 
     steps:
@@ -283,6 +305,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13.3"
+
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
 
       - uses: ./.github/actions/setup-vcpkg
 
