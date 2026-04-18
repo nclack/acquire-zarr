@@ -30,7 +30,7 @@ jobs:
   # macos-latest is in tier 1 temporarily while debugging vcpkg/openssl on
   # macOS. Move back to tier 2 once consistently green.
   test-tier1:
-    name: Test on ${{ matrix.platform }}
+    name: Test
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 25
     strategy:
@@ -84,7 +84,7 @@ jobs:
 
   # Tier 2 platforms: arm linux + macos-15-intel. Runs only if tier 1 passes.
   test-tier2:
-    name: Test on ${{ matrix.platform }}
+    name: Test
     needs: test-tier1
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 25
@@ -217,7 +217,7 @@ jobs:
 
 
   test-python-tier1:
-    name: Test Python on ${{ matrix.platform }}
+    name: Test Python
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 40
     strategy:
@@ -276,7 +276,7 @@ jobs:
         shell: bash
 
   test-python-tier2:
-    name: Test Python on ${{ matrix.platform }}
+    name: Test Python
     needs: test-python-tier1
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 40
