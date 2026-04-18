@@ -12,7 +12,7 @@ env:
 
 jobs:
   run-benchmark:
-    name: Benchmark on ${{ matrix.platform }}
+    name: Benchmark on ${{ matrix.platform }} (${{ matrix.backend }})
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
     strategy:
@@ -24,6 +24,9 @@ jobs:
           - "ubuntu-24.04-arm"
           - "macos-latest" # arm
           - "macos-15-intel" # x86_64
+        backend:
+          - "baseline"
+          - "shim"
         include:
           - platform: "ubuntu-latest"
             vcpkg_triplet: "x64-linux"
@@ -92,19 +95,25 @@ jobs:
           uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel tensorstore click rich psutil
         shell: bash
 
-      - name: Build and install Python bindings
+      - name: Build and install Python bindings (baseline)
+        if: matrix.backend == 'baseline'
         run: uv pip install --no-build-isolation ".[testing]"
         shell: bash
 
+      - name: Build and install Python bindings (shim)
+        if: matrix.backend == 'shim'
+        run: uv pip install --no-build-isolation "./shim/python[testing]"
+        shell: bash
+
       - name: Run benchmark
-        run: uv run --no-sync python benchmarks/benchmark.py --nocompare --output benchmark-${{ matrix.platform }}-${{ github.sha }}.json
+        run: uv run --no-sync python benchmarks/benchmark.py --nocompare --output benchmark-${{ matrix.platform }}-${{ matrix.backend }}-${{ github.sha }}.json
         shell: bash
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-${{ matrix.platform }}-${{ github.sha }}
-          path: benchmark-${{ matrix.platform }}-${{ github.sha }}.json
+          name: benchmark-${{ matrix.platform }}-${{ matrix.backend }}-${{ github.sha }}
+          path: benchmark-${{ matrix.platform }}-${{ matrix.backend }}-${{ github.sha }}.json
 
   generate-plots:
     name: Generate benchmark plots
