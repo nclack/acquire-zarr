@@ -20,6 +20,10 @@ env:
   BUILD_TYPE: Release
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   SCCACHE_GHA_ENABLED: "true"
+  # Runner-shipped CMake is 4.x on macOS. vcpkg ports with ancient
+  # cmake_minimum_required (e.g. snappy) are rejected by CMake 4 unless
+  # this policy floor is set.
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -78,7 +82,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 25
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform:
           - "ubuntu-24.04-arm"
@@ -262,7 +266,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 40
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform:
           - "ubuntu-24.04-arm"

@@ -9,6 +9,10 @@ on:
 env:
   BUILD_TYPE: Release
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # Runner-shipped CMake is 4.x on macOS. vcpkg ports with ancient
+  # cmake_minimum_required (e.g. snappy) are rejected by CMake 4 unless
+  # this policy floor is set.
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   build:
