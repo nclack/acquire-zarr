@@ -226,12 +226,14 @@ paths. Overflow drops oldest silently and reports a count as a
   (`-Xclang -MD`, `-MF ... unused`). Baseline path works because
   `OpenMP::OpenMP_C` is used directly in the baseline build. Excluded via
   matrix `exclude:`.
-- **Windows `test_append_throws_on_overflow`**: test passes but takes
-  ~10 min end-to-end only on Windows (fast elsewhere). Skipped on Windows
-  via `@pytest.mark.skipif(os.name == "nt")`. Suspected chucky destroy-path
-  slowness or Python-logging interaction specific to Windows; neither
-  removing `set_log_level(DEBUG)` nor setting logger `propagate=False` on
-  `acquire_zarr` fixed it.
+- **Windows test-order interaction**: in the default collection order the
+  whole suite took ~25 min with a 10-min gap around
+  `test_append_throws_on_overflow`. Randomizing test order via
+  `pytest-randomly` drops total runtime to ~15 min with
+  `test_anisotropic_downsampling` (83s) as the slowest test and no 10-min
+  gap anywhere — so the slowness was ordering-dependent, not intrinsic.
+  `pytest-randomly` is now installed in CI; prints a seed on each run for
+  reproducibility. Root ordering-sensitivity is still a loose end.
 
 ### Nice-to-haves
 
