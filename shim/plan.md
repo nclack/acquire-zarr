@@ -212,12 +212,7 @@ paths. Overflow drops oldest silently and reports a count as a
 
 ### Nice-to-haves
 
-- Wire `ZarrStream_write_custom_metadata` to chucky's `zarr_write_attribute`
-  (#88). API is per-array: `array_key` selects target (NULL → root);
-  `metadata_key` is the inner attributes key; `ome` is reserved.
-- Honor `settings->overwrite=false` via chucky's `store_has_existing_data`
-  (#89). Call at stream create; return `WillNotOverwrite` on hit.
-- gpu-dependent tests once cpu testing looks good
+- GPU-dependent tests once CPU testing looks good.
 - Benchmark the chucky-backed shim against baseline acquire-zarr.
   `.github/workflows/benchmark.yml` today only builds the baseline (root
   `CMakeLists.txt` → `src/` + `python/`) and only triggers on push/PR to
