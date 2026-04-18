@@ -47,56 +47,15 @@ jobs:
         with:
           submodules: true
 
-      - name: Install CMake 3.31
-        if: matrix.platform != 'ubuntu-24.04-arm'
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: "3.31.x"
-
-      - name: Install CMake 3.31 for ARM
-        if: matrix.platform == 'ubuntu-24.04-arm'
-        run: |
-          wget https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-linux-aarch64.tar.gz
-          tar -xzf cmake-3.31.8-linux-aarch64.tar.gz
-          sudo mv cmake-3.31.8-linux-aarch64 /opt/cmake
-          echo "/opt/cmake/bin" >> $GITHUB_PATH
-
-      - name: Export GitHub Actions cache env for vcpkg
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
+      - name: Check CMake version
         shell: bash
+        run: cmake --version
+
+      - uses: ./.github/actions/setup-vcpkg
 
       - name: Install OpenMP
         if: startsWith(matrix.platform, 'macos')
-        run: |
-          brew install libomp
+        run: brew install libomp
 
       - name: Build
         run: |
@@ -175,40 +134,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Export GitHub Actions cache env for vcpkg
+      # vcpkg is installed inside the manylinux image for ubuntu builds
+      # (see CIBW_BEFORE_BUILD below), so skip on ubuntu here.
+      - uses: ./.github/actions/setup-vcpkg
         if: ${{ !startsWith(matrix.platform, 'ubuntu') }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        if: ${{ !startsWith(matrix.platform, 'ubuntu') }}
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        if: ${{ !startsWith(matrix.platform, 'ubuntu') }} # vcpkg will be installed in the manylinux image for Ubuntu builds
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
-        shell: bash
 
       - name: macOS fixes
         if: startsWith(matrix.platform, 'macos')

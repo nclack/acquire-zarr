@@ -55,48 +55,9 @@ jobs:
         shell: bash
         run: cmake --version
 
-      - name: Set up sccache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        continue-on-error: true
+      - uses: ./.github/actions/setup-sccache
 
-      - name: Export sccache launcher
-        if: steps.sccache.outcome == 'success'
-        shell: bash
-        run: |
-          echo "SCCACHE_LAUNCHER=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
-
-      - name: Export GitHub Actions cache env for vcpkg
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
-        shell: bash
+      - uses: ./.github/actions/setup-vcpkg
 
       - name: Configure CMake
         run: |
@@ -143,53 +104,13 @@ jobs:
         shell: bash
         run: cmake --version
 
-      - name: Set up sccache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        continue-on-error: true
+      - uses: ./.github/actions/setup-sccache
 
-      - name: Export sccache launcher
-        if: steps.sccache.outcome == 'success'
-        shell: bash
-        run: |
-          echo "SCCACHE_LAUNCHER=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
-
-      - name: Export GitHub Actions cache env for vcpkg
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
-        shell: bash
+      - uses: ./.github/actions/setup-vcpkg
 
       - name: Install OpenMP
         if: startsWith(matrix.platform, 'macos')
-        run: |
-          brew install libomp
+        run: brew install libomp
 
       - name: Configure CMake
         run: |
@@ -225,69 +146,30 @@ jobs:
         shell: bash
         run: cmake --version
 
-      - name: Set up sccache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        continue-on-error: true
-
-      - name: Export sccache launcher
-        if: steps.sccache.outcome == 'success'
-        shell: bash
-        run: |
-          echo "SCCACHE_LAUNCHER=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
-          echo "CMAKE_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
+      - uses: ./.github/actions/setup-sccache
+        with:
+          export-cmake-args: "true"
 
       - name: Install minio and mcli
         run: |
-          apt update && apt install -y tmux wget
           wget https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio
           wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mcli
           chmod +x /usr/local/bin/minio
           chmod +x /usr/local/bin/mcli
 
-      - name: Start minio in tmux
+      - name: Start minio
         run: |
-          tmux new -d -s minio
-          tmux send-keys -t minio "MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD minio server /tmp/minio --console-address :9001" Enter
+          MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
+            minio server /tmp/minio --console-address :9001 \
+            > /tmp/minio.log 2>&1 &
           sleep 5
           mcli alias set $MINIO_ALIAS $MINIO_URL $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
           mcli admin user svcacct add --access-key $MINIO_ACCESS_KEY --secret-key $MINIO_SECRET_KEY $MINIO_ALIAS $MINIO_ROOT_USER
 
       - name: Create a bucket
-        run: |
-          mcli mb $MINIO_ALIAS/$MINIO_BUCKET
+        run: mcli mb $MINIO_ALIAS/$MINIO_BUCKET
 
-      - name: Export GitHub Actions cache env for vcpkg
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
-        shell: bash
+      - uses: ./.github/actions/setup-vcpkg
 
       - name: Configure CMake
         run: |
@@ -348,48 +230,11 @@ jobs:
         with:
           python-version: "3.13.3"
 
-      - name: Export GitHub Actions cache env for vcpkg
-        uses: actions/github-script@v7
+      - uses: ./.github/actions/setup-vcpkg
+
+      - uses: ./.github/actions/setup-sccache
         with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
-        shell: bash
-
-      - name: Set up sccache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        continue-on-error: true
-
-      - name: Export sccache launcher
-        if: steps.sccache.outcome == 'success'
-        shell: bash
-        run: |
-          echo "CMAKE_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
+          export-cmake-args: "true"
 
       - name: Install dependencies
         run: |
@@ -435,53 +280,15 @@ jobs:
         with:
           python-version: "3.13.3"
 
-      - name: Export GitHub Actions cache env for vcpkg
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Cache vcpkg bootstrap
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg
-            !vcpkg/downloads
-            !vcpkg/buildtrees
-            !vcpkg/packages
-            !vcpkg/installed
-          key: vcpkg-2025.03.19-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install vcpkg
-        run: |
-          if [ ! -d vcpkg ]; then
-            git clone https://github.com/microsoft/vcpkg.git -b 2025.03.19
-          fi
-          cd vcpkg
-          if [ ! -f ./vcpkg ] && [ ! -f ./vcpkg.exe ]; then
-            ./bootstrap-vcpkg.sh
-          fi
-          echo "VCPKG_ROOT=${{github.workspace}}/vcpkg" >> $GITHUB_ENV
-          echo "${{github.workspace}}/vcpkg" >> $GITHUB_PATH
-          ./vcpkg integrate install
-        shell: bash
+      - uses: ./.github/actions/setup-vcpkg
 
       - name: Install OpenMP
         if: startsWith(matrix.platform, 'macos')
-        run: |
-          brew install libomp
+        run: brew install libomp
 
-      - name: Set up sccache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        continue-on-error: true
-
-      - name: Export sccache launcher
-        if: steps.sccache.outcome == 'success'
-        shell: bash
-        run: |
-          echo "CMAKE_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
+      - uses: ./.github/actions/setup-sccache
+        with:
+          export-cmake-args: "true"
 
       - name: Install dependencies
         run: |
