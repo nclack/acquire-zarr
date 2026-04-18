@@ -90,6 +90,7 @@ endif()
 
 # --- logger compat lib for integration test macros -----------------------
 
+if(BUILD_TESTING)
 add_library(shim-test-logger STATIC
     compat/logger.cpp
 )
@@ -161,3 +162,4 @@ if(nlohmann_json_FOUND)
 else()
     message(STATUS "nlohmann_json not found -- skipping integration tests")
 endif()
+endif() # BUILD_TESTING
