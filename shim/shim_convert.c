@@ -1,5 +1,7 @@
 #include "shim_convert.h"
 
+#include "log/log.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,6 +56,12 @@ shim_convert_codec(const ZarrCompressionSettings* settings)
             cfg.id = CODEC_ZSTD;
             break;
         default:
+            // Caller asked for compression with an unrecognized codec id.
+            // Fall back to no compression and warn so the silent mismatch
+            // is visible.
+            log_warn("shim_convert_codec: unknown codec id %d; "
+                     "writing uncompressed",
+                     (int)settings->codec);
             break;
     }
     return cfg;
@@ -86,7 +94,13 @@ shim_convert_reduce_method(ZarrDownsamplingMethod method)
         case ZarrDownsamplingMethod_Max:
             return lod_reduce_max;
         case ZarrDownsamplingMethod_Decimate:
+            // Chucky has no dedicated decimate reducer. Mean is the closest
+            // drop-in; the distinction is silent by design for now.
+            return lod_reduce_mean;
         default:
+            log_warn("shim_convert_reduce_method: unknown method %d; "
+                     "defaulting to mean",
+                     (int)method);
             return lod_reduce_mean;
     }
 }

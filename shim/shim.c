@@ -29,8 +29,14 @@ apply_log_level(void);
 
 // Write intermediate group zarr.json for each path component of key.
 // For key "a/b/c", writes groups at "a/zarr.json" and "a/b/zarr.json".
-static void
+// Returns 0 on success, non-zero on allocation or store failure.
+static int
 write_intermediate_groups(struct store* store, const char* key);
+
+// printf into a freshly-allocated buffer sized to the formatted length.
+// Returns NULL on allocation failure. Caller frees.
+static char*
+alloc_printf(const char* fmt, ...);
 
 // Forward declarations for HCS metadata helpers
 static int
@@ -594,22 +600,14 @@ ZarrStreamSettings_get_array_key(const ZarrStreamSettings* settings,
                           plate->path ? plate->path : "plate";
                         const char* fov_path = fov->path ? fov->path : "0";
 
-                        // "plate_path/row_name/col_name/fov_path"
-                        size_t len =
-                          strlen(plate_path) + 1 + strlen(well->row_name) +
-                          1 + strlen(well->column_name) + 1 +
-                          strlen(fov_path) + 1;
-                        char* buf = malloc(len);
+                        char* buf = alloc_printf("%s/%s/%s/%s",
+                                                 plate_path,
+                                                 well->row_name,
+                                                 well->column_name,
+                                                 fov_path);
                         if (!buf) {
                             return ZarrStatusCode_OutOfMemory;
                         }
-                        snprintf(buf,
-                                 len,
-                                 "%s/%s/%s/%s",
-                                 plate_path,
-                                 well->row_name,
-                                 well->column_name,
-                                 fov_path);
                         *key = buf;
                         return ZarrStatusCode_Success;
                     }
@@ -648,11 +646,12 @@ alloc_printf(const char* fmt, ...)
     return buf;
 }
 
-static void
+// Returns 0 on success, non-zero on allocation or store failure.
+static int
 write_intermediate_groups(struct store* store, const char* key)
 {
     if (!key) {
-        return;
+        return 0;
     }
 
     size_t len = strlen(key);
@@ -662,26 +661,37 @@ write_intermediate_groups(struct store* store, const char* key)
     static const char SUFFIX[] = "/zarr.json";
     char* prefix = malloc(len + 1);
     char* group_key = malloc(len + sizeof(SUFFIX));
+    int rc = 0;
     if (!prefix || !group_key) {
-        free(prefix);
-        free(group_key);
-        return;
+        rc = 1;
+        goto done;
     }
     memcpy(prefix, key, len + 1);
 
     for (size_t i = 0; i < len; ++i) {
         if (prefix[i] == '/') {
             prefix[i] = '\0';
-            store->mkdirs(store, prefix);
+            if (store->mkdirs(store, prefix) != 0) {
+                log_error("mkdirs failed for intermediate group '%s'", prefix);
+                rc = 1;
+                goto done;
+            }
             memcpy(group_key, prefix, i);
             memcpy(group_key + i, SUFFIX, sizeof(SUFFIX));
-            zarr_group_write_with_raw_attrs(store, group_key, "{}");
+            if (zarr_group_write_with_raw_attrs(store, group_key, "{}") != 0) {
+                log_error("failed to write intermediate group metadata '%s'",
+                          group_key);
+                rc = 1;
+                goto done;
+            }
             prefix[i] = '/';
         }
     }
 
+done:
     free(prefix);
     free(group_key);
+    return rc;
 }
 
 // Configure `sa` as a multiscale array: builds dims/axes, creates the
@@ -788,9 +798,12 @@ create_flat_array(struct ZarrStream_s* stream,
 
     // Write intermediate group zarr.json for each path component and ensure
     // the leaf directory exists for zarr_array_create.
-    write_intermediate_groups(stream->store, sa->key);
-    if (sa->key) {
-        stream->store->mkdirs(stream->store, sa->key);
+    if (write_intermediate_groups(stream->store, sa->key) != 0) {
+        return 0;
+    }
+    if (sa->key && stream->store->mkdirs(stream->store, sa->key) != 0) {
+        log_error("mkdirs failed for array directory '%s'", sa->key);
+        return 0;
     }
 
     sa->sink.kind = SHIM_SINK_ARRAY;
@@ -934,21 +947,32 @@ create_hcs_arrays(struct ZarrStream_s* stream,
             }
             stream->store->mkdirs(stream->store, well_dir);
             {
-                char attrs[4096];
-                int alen = shim_hcs_well_attributes_json(
-                  attrs, sizeof(attrs), well);
+                // Generous cap scaled to image count so writers with many
+                // FOVs per well don't overflow silently. Each image
+                // contributes ~64 bytes of JSON in the worst case.
+                size_t attrs_cap = 512 + well->image_count * 96;
+                char* attrs = malloc(attrs_cap);
+                if (!attrs) {
+                    free(well_dir);
+                    return 0;
+                }
+                int alen =
+                  shim_hcs_well_attributes_json(attrs, attrs_cap, well);
                 if (alen < 0) {
+                    free(attrs);
                     free(well_dir);
                     return 0;
                 }
                 char* key = alloc_printf("%s/zarr.json", well_dir);
                 if (!key) {
+                    free(attrs);
                     free(well_dir);
                     return 0;
                 }
                 int rc =
                   zarr_group_write_with_raw_attrs(stream->store, key, attrs);
                 free(key);
+                free(attrs);
                 if (rc != 0) {
                     free(well_dir);
                     return 0;
@@ -1108,10 +1132,13 @@ shim_hcs_plate_attributes_json(char* buf,
 
         jw_object_begin(&jw);
         jw_key(&jw, "path");
-        char path[256];
-        snprintf(
-          path, sizeof(path), "%s/%s", well->row_name, well->column_name);
+        char* path =
+          alloc_printf("%s/%s", well->row_name, well->column_name);
+        if (!path) {
+            return -1;
+        }
         jw_string(&jw, path);
+        free(path);
         jw_key(&jw, "rowIndex");
         jw_int(&jw, row_idx);
         jw_key(&jw, "columnIndex");
@@ -1254,12 +1281,22 @@ ZarrStream_create(ZarrStreamSettings* settings)
     // Refuse to overwrite existing data unless the caller opted in. The
     // public API has no error-code return for create, so the caller only
     // sees NULL — the log line documents why.
-    if (!settings->overwrite &&
-        store_has_existing_data(stream->store)) {
-        log_error("refusing to overwrite existing data at %s "
-                  "(set settings.overwrite=true to replace)",
-                  settings->store_path);
-        goto fail;
+    // `store_has_existing_data` returns 1=exists, 0=absent, -1=error.
+    // A transient HEAD failure shouldn't masquerade as "exists".
+    if (!settings->overwrite) {
+        int existing = store_has_existing_data(stream->store);
+        if (existing > 0) {
+            log_error("refusing to overwrite existing data at %s "
+                      "(set settings.overwrite=true to replace)",
+                      settings->store_path);
+            goto fail;
+        }
+        if (existing < 0) {
+            log_error("could not check for existing data at %s "
+                      "(store HEAD failed); aborting stream create",
+                      settings->store_path);
+            goto fail;
+        }
     }
 
     stream->store->mkdirs(stream->store, ".");
@@ -1441,9 +1478,22 @@ ZarrStream_append(ZarrStream* stream,
             cur = next;
             break;
         }
+        if (r.error == multiarray_writer_not_flushable) {
+            // The caller tried to switch to this array while the previously
+            // active array is mid-epoch. That's a programming error — the
+            // multi-array writer shares chunk pools across arrays and can
+            // only switch at epoch boundaries. Report it distinctly so the
+            // caller can diagnose.
+            const char* k = key ? key : "(no key)";
+            log_error("ZarrStream_append: cannot switch to array '%s' "
+                      "mid-epoch of a different array; finish the current "
+                      "epoch first",
+                      k);
+            rc = ZarrStatusCode_InvalidArgument;
+            break;
+        }
         if (r.error != multiarray_writer_ok) {
-            // fail or not_flushable: caller switched arrays mid-epoch, or
-            // the writer returned an internal error. Stop consuming.
+            log_error("ZarrStream_append: writer error %d", r.error);
             rc = ZarrStatusCode_InternalError;
             break;
         }
