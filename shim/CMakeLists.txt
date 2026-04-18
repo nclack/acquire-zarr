@@ -19,7 +19,7 @@ add_subdirectory(chucky)
 
 set(shim_sources shim.c shim_convert.c shim_sink.c)
 set(shim_non_backend_libs
-    store_fs store_s3 zarr_array zarr_group ngff_multiscale
+    store_api store_fs store_s3 zarr_array zarr_group ngff_multiscale
     hcs hcs_metadata
     dimension writer stream_config
     platform chucky_log

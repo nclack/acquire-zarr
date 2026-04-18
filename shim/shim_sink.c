@@ -22,6 +22,8 @@ shim_sink_flush(struct shim_sink* s)
             zarr_array_flush(s->array);
             break;
         case SHIM_SINK_MULTISCALE:
+            ngff_multiscale_flush(s->multiscale);
+            break;
         case SHIM_SINK_NONE:
             break;
     }

@@ -1,5 +1,6 @@
 #include "shim_internal.h"
 #include "shim_convert.h"
+#include "log/log.h"
 #include "multiarray/multiarray.h"
 #include "writer.h"
 #include "zarr/store.h"
@@ -9,6 +10,7 @@
 #include "zarr/json_writer.h"
 #include "chucky_log.h"
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -569,11 +571,11 @@ ZarrStreamSettings_get_array_key(const ZarrStreamSettings* settings,
     // Flat arrays first
     if (index < settings->array_count) {
         const ZarrArraySettings* as = &settings->arrays[index];
-        if (as->output_key) {
-            *key = strdup(as->output_key);
-        } else {
+        if (!as->output_key) {
             *key = NULL;
+            return ZarrStatusCode_Success;
         }
+        *key = strdup(as->output_key);
         return *key ? ZarrStatusCode_Success : ZarrStatusCode_OutOfMemory;
     }
 
@@ -622,6 +624,30 @@ ZarrStreamSettings_get_array_key(const ZarrStreamSettings* settings,
 
 /* --- Helpers for creating arrays from settings -------------------------- */
 
+// printf into a freshly-allocated buffer sized to the formatted length.
+// Returns NULL on allocation failure. Caller frees.
+static char*
+alloc_printf(const char* fmt, ...)
+{
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+        va_end(ap2);
+        return NULL;
+    }
+    char* buf = malloc((size_t)n + 1);
+    if (!buf) {
+        va_end(ap2);
+        return NULL;
+    }
+    vsnprintf(buf, (size_t)n + 1, fmt, ap2);
+    va_end(ap2);
+    return buf;
+}
+
 static void
 write_intermediate_groups(struct store* store, const char* key)
 {
@@ -629,27 +655,95 @@ write_intermediate_groups(struct store* store, const char* key)
         return;
     }
 
-    // Make a mutable copy to find '/' separators
     size_t len = strlen(key);
-    char* buf = malloc(len + 1);
-    if (!buf) {
+    // Prefix buffer: holds the evolving "a/b/c" path (null-terminated at
+    // each '/' for mkdirs). Group-key buffer: prefix + "/zarr.json".
+    // Both sized for the full key to avoid any fixed-size truncation.
+    static const char SUFFIX[] = "/zarr.json";
+    char* prefix = malloc(len + 1);
+    char* group_key = malloc(len + sizeof(SUFFIX));
+    if (!prefix || !group_key) {
+        free(prefix);
+        free(group_key);
         return;
     }
-    memcpy(buf, key, len + 1);
+    memcpy(prefix, key, len + 1);
 
-    // For each '/' in key, write a group at that prefix
     for (size_t i = 0; i < len; ++i) {
-        if (buf[i] == '/') {
-            buf[i] = '\0';
-            store->mkdirs(store, buf);
-            char group_key[4096];
-            snprintf(group_key, sizeof(group_key), "%s/zarr.json", buf);
+        if (prefix[i] == '/') {
+            prefix[i] = '\0';
+            store->mkdirs(store, prefix);
+            memcpy(group_key, prefix, i);
+            memcpy(group_key + i, SUFFIX, sizeof(SUFFIX));
             zarr_group_write_with_raw_attrs(store, group_key, "{}");
-            buf[i] = '/';
+            prefix[i] = '/';
         }
     }
 
-    free(buf);
+    free(prefix);
+    free(group_key);
+}
+
+// Configure `sa` as a multiscale array: builds dims/axes, creates the
+// ngff_multiscale sink under `sa->key`, and fills the tile_stream config.
+// `sa->key` must be set by the caller (NULL == root). Returns 1 on success,
+// 0 on failure; partial state is cleaned up by the caller via shim_array_destroy.
+static int
+configure_multiscale_array(struct ZarrStream_s* stream,
+                           const ZarrArraySettings* as,
+                           struct shim_array* sa)
+{
+    sa->rank = (uint8_t)as->dimension_count;
+    sa->dims = shim_convert_dimensions(
+      as->dimensions, as->dimension_count, as->storage_dimension_order, true);
+    if (!sa->dims) {
+        return 0;
+    }
+
+    sa->axes = shim_convert_ngff_axes(as->dimensions, as->dimension_count);
+    if (!sa->axes) {
+        return 0;
+    }
+
+    enum dtype dt = shim_convert_dtype(as->data_type);
+    struct codec_config codec = shim_convert_codec(as->compression_settings);
+
+    size_t ndims = as->dimension_count;
+    sa->frame_bytes = dtype_bpe(dt) * as->dimensions[ndims - 2].array_size_px *
+                      as->dimensions[ndims - 1].array_size_px;
+
+    struct ngff_multiscale_config ms_cfg = {
+        .data_type = dt,
+        .fill_value = 0.0,
+        .rank = sa->rank,
+        .dimensions = sa->dims,
+        .nlod = 0,
+        .codec = codec,
+        .axes = sa->axes,
+    };
+    sa->sink.kind = SHIM_SINK_MULTISCALE;
+    sa->sink.multiscale =
+      ngff_multiscale_create(stream->store, sa->key, &ms_cfg);
+    if (!sa->sink.multiscale) {
+        return 0;
+    }
+
+    sa->config = (struct tile_stream_configuration){
+        .buffer_capacity_bytes = sa->frame_bytes,
+        .dtype = dt,
+        .rank = sa->rank,
+        .dimensions = sa->dims,
+        .codec = codec,
+        .reduce_method = shim_convert_reduce_method(as->downsampling_method),
+        .append_reduce_method =
+          shim_convert_reduce_method(as->downsampling_method),
+        .epochs_per_batch = 0,
+        .target_batch_chunks = 0,
+        .metadata_update_interval_s = 1.0f,
+        .max_threads = stream->max_threads,
+    };
+
+    return 1;
 }
 
 static int
@@ -664,11 +758,15 @@ create_flat_array(struct ZarrStream_s* stream,
         }
     }
 
+    if (as->multiscale) {
+        return configure_multiscale_array(stream, as, sa);
+    }
+
     sa->rank = (uint8_t)as->dimension_count;
     sa->dims = shim_convert_dimensions(as->dimensions,
                                        as->dimension_count,
                                        as->storage_dimension_order,
-                                       as->multiscale);
+                                       false);
     if (!sa->dims) {
         return 0;
     }
@@ -680,49 +778,25 @@ create_flat_array(struct ZarrStream_s* stream,
     sa->frame_bytes = dtype_bpe(dt) * as->dimensions[ndims - 2].array_size_px *
                       as->dimensions[ndims - 1].array_size_px;
 
-    if (as->multiscale) {
-        sa->axes = shim_convert_ngff_axes(as->dimensions, as->dimension_count);
-        if (!sa->axes) {
-            return 0;
-        }
+    struct zarr_array_config arr_cfg = {
+        .data_type = dt,
+        .fill_value = 0.0,
+        .rank = sa->rank,
+        .dimensions = sa->dims,
+        .codec = codec,
+    };
 
-        struct ngff_multiscale_config ms_cfg = {
-            .data_type = dt,
-            .fill_value = 0.0,
-            .rank = sa->rank,
-            .dimensions = sa->dims,
-            .nlod = 0,
-            .codec = codec,
-            .axes = sa->axes,
-        };
-        sa->sink.kind = SHIM_SINK_MULTISCALE;
-        sa->sink.multiscale =
-          ngff_multiscale_create(stream->store, sa->key, &ms_cfg);
-        if (!sa->sink.multiscale) {
-            return 0;
-        }
-    } else {
-        struct zarr_array_config arr_cfg = {
-            .data_type = dt,
-            .fill_value = 0.0,
-            .rank = sa->rank,
-            .dimensions = sa->dims,
-            .codec = codec,
-        };
+    // Write intermediate group zarr.json for each path component and ensure
+    // the leaf directory exists for zarr_array_create.
+    write_intermediate_groups(stream->store, sa->key);
+    if (sa->key) {
+        stream->store->mkdirs(stream->store, sa->key);
+    }
 
-        // Write intermediate group zarr.json for each path component
-        // and ensure the leaf directory exists for zarr_array_create
-        write_intermediate_groups(stream->store, sa->key);
-        if (sa->key) {
-            stream->store->mkdirs(stream->store, sa->key);
-        }
-
-        sa->sink.kind = SHIM_SINK_ARRAY;
-        sa->sink.array =
-          zarr_array_create(stream->store, sa->key, &arr_cfg);
-        if (!sa->sink.array) {
-            return 0;
-        }
+    sa->sink.kind = SHIM_SINK_ARRAY;
+    sa->sink.array = zarr_array_create(stream->store, sa->key, &arr_cfg);
+    if (!sa->sink.array) {
+        return 0;
     }
 
     sa->config = (struct tile_stream_configuration){
@@ -816,9 +890,13 @@ create_hcs_arrays(struct ZarrStream_s* stream,
                 return 0;
             }
 
-            char key[4096];
-            snprintf(key, sizeof(key), "%s/zarr.json", plate_path);
+            char* key = alloc_printf("%s/zarr.json", plate_path);
+            if (!key) {
+                free(attrs);
+                return 0;
+            }
             int rc = zarr_group_write_with_raw_attrs(stream->store, key, attrs);
+            free(key);
             free(attrs);
             if (rc != 0) {
                 return 0;
@@ -832,43 +910,51 @@ create_hcs_arrays(struct ZarrStream_s* stream,
             const char* col_name = well->column_name;
 
             // Row group
-            char row_dir[4096];
-            snprintf(row_dir, sizeof(row_dir), "%s/%s", plate_path, row_name);
+            char* row_dir = alloc_printf("%s/%s", plate_path, row_name);
+            if (!row_dir) {
+                return 0;
+            }
             stream->store->mkdirs(stream->store, row_dir);
             {
-                char key[4096];
-                snprintf(
-                  key, sizeof(key), "%s/%s/zarr.json", plate_path, row_name);
+                char* key = alloc_printf("%s/zarr.json", row_dir);
+                if (!key) {
+                    free(row_dir);
+                    return 0;
+                }
                 zarr_group_write_with_raw_attrs(stream->store, key, "{}");
+                free(key);
             }
+            free(row_dir);
 
             // Well group with attributes
-            char well_dir[4096];
-            snprintf(well_dir,
-                     sizeof(well_dir),
-                     "%s/%s/%s",
-                     plate_path,
-                     row_name,
-                     col_name);
+            char* well_dir =
+              alloc_printf("%s/%s/%s", plate_path, row_name, col_name);
+            if (!well_dir) {
+                return 0;
+            }
             stream->store->mkdirs(stream->store, well_dir);
             {
                 char attrs[4096];
                 int alen = shim_hcs_well_attributes_json(
                   attrs, sizeof(attrs), well);
                 if (alen < 0) {
+                    free(well_dir);
                     return 0;
                 }
-                char key[4096];
-                snprintf(key,
-                         sizeof(key),
-                         "%s/%s/%s/zarr.json",
-                         plate_path,
-                         row_name,
-                         col_name);
-                if (zarr_group_write_with_raw_attrs(stream->store, key, attrs) != 0) {
+                char* key = alloc_printf("%s/zarr.json", well_dir);
+                if (!key) {
+                    free(well_dir);
+                    return 0;
+                }
+                int rc =
+                  zarr_group_write_with_raw_attrs(stream->store, key, attrs);
+                free(key);
+                if (rc != 0) {
+                    free(well_dir);
                     return 0;
                 }
             }
+            free(well_dir);
 
             // Create FOV multiscale sinks
             for (size_t f = 0; f < well->image_count; ++f) {
@@ -876,80 +962,19 @@ create_hcs_arrays(struct ZarrStream_s* stream,
                 const ZarrArraySettings* as = fov->array_settings;
                 struct shim_array* sa = &stream->arrays[*array_idx];
 
-                // Build the key
                 const char* fov_path = fov->path ? fov->path : "0";
-                size_t key_len = strlen(plate_path) + 1 + strlen(row_name) +
-                                 1 + strlen(col_name) + 1 + strlen(fov_path) +
-                                 1;
-                sa->key = malloc(key_len);
+                sa->key = alloc_printf("%s/%s/%s/%s",
+                                       plate_path,
+                                       row_name,
+                                       col_name,
+                                       fov_path);
                 if (!sa->key) {
                     return 0;
                 }
-                snprintf(sa->key,
-                         key_len,
-                         "%s/%s/%s/%s",
-                         plate_path,
-                         row_name,
-                         col_name,
-                         fov_path);
 
-                sa->rank = (uint8_t)as->dimension_count;
-                sa->dims =
-                  shim_convert_dimensions(as->dimensions,
-                                          as->dimension_count,
-                                          as->storage_dimension_order,
-                                          true); // HCS FOVs are multiscale
-                if (!sa->dims) {
+                if (!configure_multiscale_array(stream, as, sa)) {
                     return 0;
                 }
-
-                sa->axes =
-                  shim_convert_ngff_axes(as->dimensions, as->dimension_count);
-                if (!sa->axes) {
-                    return 0;
-                }
-
-                enum dtype dt = shim_convert_dtype(as->data_type);
-                struct codec_config codec =
-                  shim_convert_codec(as->compression_settings);
-
-                size_t ndims = as->dimension_count;
-                sa->frame_bytes = dtype_bpe(dt) *
-                                  as->dimensions[ndims - 2].array_size_px *
-                                  as->dimensions[ndims - 1].array_size_px;
-
-                struct ngff_multiscale_config ms_cfg = {
-                    .data_type = dt,
-                    .fill_value = 0.0,
-                    .rank = sa->rank,
-                    .dimensions = sa->dims,
-                    .nlod = 0,
-                    .codec = codec,
-                    .axes = sa->axes,
-                };
-
-                sa->sink.kind = SHIM_SINK_MULTISCALE;
-                sa->sink.multiscale = ngff_multiscale_create(
-                  stream->store, sa->key, &ms_cfg);
-                if (!sa->sink.multiscale) {
-                    return 0;
-                }
-
-                sa->config = (struct tile_stream_configuration){
-                    .buffer_capacity_bytes = sa->frame_bytes,
-                    .dtype = dt,
-                    .rank = sa->rank,
-                    .dimensions = sa->dims,
-                    .codec = codec,
-                    .reduce_method =
-                      shim_convert_reduce_method(as->downsampling_method),
-                    .append_reduce_method =
-                      shim_convert_reduce_method(as->downsampling_method),
-                    .epochs_per_batch = 0,
-                    .target_batch_chunks = 0,
-                    .metadata_update_interval_s = 1.0f,
-                    .max_threads = stream->max_threads,
-                };
 
                 ++(*array_idx);
             }
@@ -1225,6 +1250,18 @@ ZarrStream_create(ZarrStreamSettings* settings)
     if (!stream->store) {
         goto fail;
     }
+
+    // Refuse to overwrite existing data unless the caller opted in. The
+    // public API has no error-code return for create, so the caller only
+    // sees NULL — the log line documents why.
+    if (!settings->overwrite &&
+        store_has_existing_data(stream->store)) {
+        log_error("refusing to overwrite existing data at %s "
+                  "(set settings.overwrite=true to replace)",
+                  settings->store_path);
+        goto fail;
+    }
+
     stream->store->mkdirs(stream->store, ".");
 
     // Count total arrays
@@ -1431,11 +1468,46 @@ ZarrStream_write_custom_metadata(ZarrStream* stream,
                                  const char* metadata_key,
                                  const char* metadata)
 {
-    (void)stream;
-    (void)array_key;
-    (void)metadata_key;
-    (void)metadata;
-    return ZarrStatusCode_NotYetImplemented;
+    if (!stream || !metadata_key || !metadata) {
+        return ZarrStatusCode_InvalidArgument;
+    }
+
+    // Find the target array by key. NULL array_key selects the single
+    // root-level array (only valid when there is exactly one flat array
+    // without an output_key).
+    struct shim_array* target = NULL;
+    for (size_t i = 0; i < stream->n_arrays; ++i) {
+        struct shim_array* sa = &stream->arrays[i];
+        if (array_key == NULL) {
+            if (sa->key == NULL) {
+                target = sa;
+                break;
+            }
+        } else if (sa->key && strcmp(sa->key, array_key) == 0) {
+            target = sa;
+            break;
+        }
+    }
+
+    if (!target) {
+        return ZarrStatusCode_KeyNotFound;
+    }
+
+    int rc;
+    switch (target->sink.kind) {
+        case SHIM_SINK_ARRAY:
+            rc = zarr_array_set_attribute(
+              target->sink.array, metadata_key, metadata);
+            break;
+        case SHIM_SINK_MULTISCALE:
+            rc = ngff_multiscale_set_attribute(
+              target->sink.multiscale, metadata_key, metadata);
+            break;
+        default:
+            return ZarrStatusCode_InternalError;
+    }
+
+    return rc == 0 ? ZarrStatusCode_Success : ZarrStatusCode_InternalError;
 }
 
 ZarrStatusCode
