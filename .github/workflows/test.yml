@@ -213,7 +213,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv
-          uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel numpy pytest pytest-timeout
+          uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel numpy pytest pytest-timeout pytest-randomly
         shell: bash
 
       - name: Build and install Python bindings
@@ -228,7 +228,7 @@ jobs:
   test-python:
     name: Test Python on ${{ matrix.platform }}
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -290,7 +290,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv
-          uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel numpy pytest pytest-timeout
+          uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel numpy pytest pytest-timeout pytest-randomly
         shell: bash
 
       - name: Build and install Python bindings
