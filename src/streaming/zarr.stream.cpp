@@ -1656,21 +1656,49 @@ ZarrStream_s::process_frame_queue_()
             it == output_arrays_.end()) {
             // If we have gotten here, something has gone seriously wrong
             set_error_("Output node not found for key: '" + output_key + "'");
-            std::unique_lock lock(frame_queue_mutex_);
-            frame_queue_finished_cv_.notify_all();
+            {
+                std::unique_lock lock(frame_queue_mutex_);
+                process_frames_ = false;
+                frame_queue_->clear();
+                frame_queue_not_full_cv_.notify_all();
+                frame_queue_empty_cv_.notify_all();
+                frame_queue_finished_cv_.notify_all();
+            }
             return;
         } else {
             auto& output_node = it->second;
 
             size_t n_bytes;
-            if (const auto result =
+            bool write_ok = false;
+            std::string err_msg;
+            try {
+                const auto result =
                   output_node.array->write_frame(frame, n_bytes);
-                result != zarr::WriteResult::Ok) {
-                // TODO (aliddell): retry on WriteResult::PartialWrite
-                set_error_("Failed to write frame to writer for key: " +
-                           output_key);
-                std::unique_lock lock(frame_queue_mutex_);
-                frame_queue_finished_cv_.notify_all();
+                if (result != zarr::WriteResult::Ok) {
+                    // TODO (aliddell): retry on WriteResult::PartialWrite
+                    err_msg = "Failed to write frame to writer for key: " +
+                              output_key;
+                } else {
+                    write_ok = true;
+                }
+            } catch (const std::exception& exc) {
+                // A failed compress/flush inside write_frame throws via
+                // CHECK(); surface it back to the user so the next append()
+                // sees the error instead of the failure being swallowed.
+                err_msg = "Exception while writing frame for key '" +
+                          output_key + "': " + exc.what();
+            }
+
+            if (!write_ok) {
+                set_error_(err_msg);
+                {
+                    std::unique_lock lock(frame_queue_mutex_);
+                    process_frames_ = false;
+                    frame_queue_->clear();
+                    frame_queue_not_full_cv_.notify_all();
+                    frame_queue_empty_cv_.notify_all();
+                    frame_queue_finished_cv_.notify_all();
+                }
                 return;
             }
         }
@@ -1710,11 +1738,18 @@ ZarrStream_s::finalize_frame_queue_()
         frame_queue_not_full_cv_.notify_all();
     }
 
-    // Wait for frame processing to complete
+    // Wait for frame processing to complete. Use a timeout so the destructor
+    // cannot hang indefinitely if a future change reintroduces a missing
+    // notify on one of the worker-thread early-exit paths.
     std::unique_lock lock(frame_queue_mutex_);
-    frame_queue_finished_cv_.wait(lock, [this] {
-        return frame_queue_processing_done_.load() || frame_queue_->empty();
-    });
+    if (!frame_queue_finished_cv_.wait_for(
+          lock, std::chrono::seconds(30), [this] {
+              return frame_queue_processing_done_.load() ||
+                     frame_queue_->empty();
+          })) {
+        LOG_ERROR("Timed out waiting for frame queue to finalize after 30s; "
+                  "proceeding with shutdown");
+    }
 }
 
 bool
