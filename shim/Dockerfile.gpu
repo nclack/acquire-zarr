@@ -18,9 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # nvcomp 5.x — static libs distributed as a tarball by NVIDIA.
 # Layout after extract: /opt/nvcomp/{include,lib}.
-ARG NVCOMP_VERSION=5.1.0.7
+# URL: NVIDIA's /compute/nvcomp/redist path is the one that stays stable;
+# the /local_installers/<version>/ path has been removed for old patch
+# versions, so point at a version that is currently published in redist.
+ARG NVCOMP_VERSION=5.1.0.21
 RUN curl -fsSL -o /tmp/nvcomp.tgz \
-        "https://developer.download.nvidia.com/compute/nvcomp/${NVCOMP_VERSION}/local_installers/nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda12-archive.tar.xz" \
+        "https://developer.download.nvidia.com/compute/nvcomp/redist/nvcomp/linux-x86_64/nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda12-archive.tar.xz" \
     && mkdir -p /opt/nvcomp \
     && tar -xJf /tmp/nvcomp.tgz -C /opt/nvcomp --strip-components=1 \
     && rm /tmp/nvcomp.tgz
