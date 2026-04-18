@@ -2473,9 +2473,13 @@ PYBIND11_MODULE(acquire_zarr, m)
     // Python, avoiding deadlocks when the main thread is blocked on IO.
     // Silence the default stderr sink; users control verbosity via
     // logging.getLogger("acquire_zarr").setLevel(...).
-    py::module_::import("logging")
-      .attr("getLogger")("acquire_zarr")
-      .attr("addHandler")(py::module_::import("logging").attr("NullHandler")());
+    {
+        auto logger =
+          py::module_::import("logging").attr("getLogger")("acquire_zarr");
+        logger.attr("addHandler")(
+          py::module_::import("logging").attr("NullHandler")());
+        logger.attr("propagate") = false;
+    }
     chucky_log_add_callback(chucky_log_to_ring, nullptr, CHUCKY_LOG_TRACE);
     chucky_log_set_quiet(1);
 #endif
