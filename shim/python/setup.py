@@ -31,6 +31,14 @@ class CMakeBuild(build_ext):
             "-DBUILD_TESTING=OFF",
         ]
 
+        vcpkg_root = os.environ.get("VCPKG_ROOT")
+        if vcpkg_root:
+            cmake_args.append(
+                f"-DCMAKE_TOOLCHAIN_FILE={vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
+            )
+            if self.compiler.compiler_type == "msvc":
+                cmake_args.append("-DVCPKG_TARGET_TRIPLET=x64-windows-static")
+
         extra_args = os.environ.get("CMAKE_ARGS", "").split()
         cmake_args += [arg for arg in extra_args if arg]
 
