@@ -3,8 +3,16 @@ name: Shim Tests
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'CHANGELOG*'
+      - 'LICENSE*'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'CHANGELOG*'
+      - 'LICENSE*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
