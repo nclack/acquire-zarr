@@ -1475,7 +1475,14 @@ ZarrStream_append(ZarrStream* stream,
         const char* next = rest_beg ? rest_beg : end;
 
         if (r.error == multiarray_writer_finished) {
+            // Chucky returns `finished` both for natural completion and for
+            // post-capacity appends (as a silent no-op). Distinguish: if the
+            // writer failed to consume the full input, the caller tried to
+            // write past the array's capacity.
             cur = next;
+            if (cur < end) {
+                rc = ZarrStatusCode_WriteOutOfBounds;
+            }
             break;
         }
         if (r.error == multiarray_writer_not_flushable) {

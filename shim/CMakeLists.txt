@@ -129,6 +129,7 @@ if(nlohmann_json_FOUND)
         stream-named-array-to-s3
         stream-compressed-to-s3
         stream-append-nullptr
+        stream-throws-on-overflow
     )
 
     foreach(name ${integration_tests})

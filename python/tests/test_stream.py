@@ -1820,3 +1820,5 @@ def test_append_throws_on_overflow(
         stream.append(one_more_byte)
 
         assert e
+
+    stream.close()
