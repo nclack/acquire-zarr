@@ -51,10 +51,9 @@ jobs:
           submodules: true
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install CMake 3.31
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: "3.31.x"
+      - name: Check CMake version
+        shell: bash
+        run: cmake --version
 
       - name: Set up sccache
         id: sccache
@@ -140,19 +139,9 @@ jobs:
           submodules: true
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install CMake 3.31
-        if: matrix.platform != 'ubuntu-24.04-arm'
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: "3.31.x"
-
-      - name: Install CMake 3.31 for ARM
-        if: matrix.platform == 'ubuntu-24.04-arm'
-        run: |
-          wget https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-linux-aarch64.tar.gz
-          tar -xzf cmake-3.31.8-linux-aarch64.tar.gz
-          sudo mv cmake-3.31.8-linux-aarch64 /opt/cmake
-          echo "/opt/cmake/bin" >> $GITHUB_PATH
+      - name: Check CMake version
+        shell: bash
+        run: cmake --version
 
       - name: Set up sccache
         id: sccache
@@ -232,10 +221,9 @@ jobs:
           submodules: true
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install CMake 3.31
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: "3.31.x"
+      - name: Check CMake version
+        shell: bash
+        run: cmake --version
 
       - name: Set up sccache
         id: sccache
