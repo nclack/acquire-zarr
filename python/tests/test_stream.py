@@ -1769,7 +1769,6 @@ def test_single_2d_image(store_path: Path, request: pytest.FixtureRequest):
 def test_append_throws_on_overflow(
     store_path: Path, request: pytest.FixtureRequest
 ):
-    set_log_level(LogLevel.DEBUG)
     settings = StreamSettings(
         store_path=str(store_path / f"{request.node.name}.zarr"),
         arrays=[
