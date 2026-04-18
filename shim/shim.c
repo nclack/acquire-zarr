@@ -48,9 +48,7 @@ shim_hcs_plate_attributes_json(char* buf,
                                size_t cap,
                                const ZarrHCSPlate* plate);
 static int
-shim_hcs_well_attributes_json(char* buf,
-                              size_t cap,
-                              const ZarrHCSWell* well);
+shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well);
 
 /* --- Version / status / logging ----------------------------------------- */
 
@@ -496,9 +494,8 @@ estimate_one_array_bytes(const ZarrArraySettings* as,
 }
 
 ZarrStatusCode
-ZarrStreamSettings_estimate_max_memory_usage(
-  const ZarrStreamSettings* settings,
-  size_t* usage)
+ZarrStreamSettings_estimate_max_memory_usage(const ZarrStreamSettings* settings,
+                                             size_t* usage)
 {
     if (!settings || !usage) {
         return ZarrStatusCode_InvalidArgument;
@@ -697,7 +694,8 @@ done:
 // Configure `sa` as a multiscale array: builds dims/axes, creates the
 // ngff_multiscale sink under `sa->key`, and fills the tile_stream config.
 // `sa->key` must be set by the caller (NULL == root). Returns 1 on success,
-// 0 on failure; partial state is cleaned up by the caller via shim_array_destroy.
+// 0 on failure; partial state is cleaned up by the caller via
+// shim_array_destroy.
 static int
 configure_multiscale_array(struct ZarrStream_s* stream,
                            const ZarrArraySettings* as,
@@ -773,10 +771,8 @@ create_flat_array(struct ZarrStream_s* stream,
     }
 
     sa->rank = (uint8_t)as->dimension_count;
-    sa->dims = shim_convert_dimensions(as->dimensions,
-                                       as->dimension_count,
-                                       as->storage_dimension_order,
-                                       false);
+    sa->dims = shim_convert_dimensions(
+      as->dimensions, as->dimension_count, as->storage_dimension_order, false);
     if (!sa->dims) {
         return 0;
     }
@@ -887,17 +883,16 @@ create_hcs_arrays(struct ZarrStream_s* stream,
 
         // Build plate attributes JSON
         {
-            size_t attr_cap =
-              2048 + zplate->well_count * 128 +
-              zplate->acquisition_count * 256 +
-              zplate->row_count * 32 + zplate->column_count * 32;
+            size_t attr_cap = 2048 + zplate->well_count * 128 +
+                              zplate->acquisition_count * 256 +
+                              zplate->row_count * 32 +
+                              zplate->column_count * 32;
             char* attrs = malloc(attr_cap);
             if (!attrs) {
                 return 0;
             }
 
-            int alen = shim_hcs_plate_attributes_json(
-              attrs, attr_cap, zplate);
+            int alen = shim_hcs_plate_attributes_json(attrs, attr_cap, zplate);
             if (alen < 0) {
                 free(attrs);
                 return 0;
@@ -987,11 +982,8 @@ create_hcs_arrays(struct ZarrStream_s* stream,
                 struct shim_array* sa = &stream->arrays[*array_idx];
 
                 const char* fov_path = fov->path ? fov->path : "0";
-                sa->key = alloc_printf("%s/%s/%s/%s",
-                                       plate_path,
-                                       row_name,
-                                       col_name,
-                                       fov_path);
+                sa->key = alloc_printf(
+                  "%s/%s/%s/%s", plate_path, row_name, col_name, fov_path);
                 if (!sa->key) {
                     return 0;
                 }
@@ -1015,9 +1007,7 @@ create_hcs_arrays(struct ZarrStream_s* stream,
 /* --- HCS metadata JSON helpers ------------------------------------------ */
 
 static int
-shim_hcs_plate_attributes_json(char* buf,
-                               size_t cap,
-                               const ZarrHCSPlate* plate)
+shim_hcs_plate_attributes_json(char* buf, size_t cap, const ZarrHCSPlate* plate)
 {
     struct json_writer jw;
     jw_init(&jw, buf, cap);
@@ -1132,8 +1122,7 @@ shim_hcs_plate_attributes_json(char* buf,
 
         jw_object_begin(&jw);
         jw_key(&jw, "path");
-        char* path =
-          alloc_printf("%s/%s", well->row_name, well->column_name);
+        char* path = alloc_printf("%s/%s", well->row_name, well->column_name);
         if (!path) {
             return -1;
         }
@@ -1158,9 +1147,7 @@ shim_hcs_plate_attributes_json(char* buf,
 }
 
 static int
-shim_hcs_well_attributes_json(char* buf,
-                              size_t cap,
-                              const ZarrHCSWell* well)
+shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well)
 {
     struct json_writer jw;
     jw_init(&jw, buf, cap);
@@ -1357,8 +1344,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
         if (!stream->multi_stream) {
             goto fail;
         }
-        stream->writer =
-          multiarray_tile_stream_writer(stream->multi_stream);
+        stream->writer = multiarray_tile_stream_writer(stream->multi_stream);
         if (!stream->writer) {
             goto fail;
         }
