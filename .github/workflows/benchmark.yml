@@ -103,7 +103,15 @@ jobs:
           brew install libomp
 
       - name: Set up sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+
+      - name: Export sccache launcher
+        if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          echo "CMAKE_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -113,15 +121,11 @@ jobs:
 
       - name: Build and install Python bindings (baseline)
         if: matrix.backend == 'baseline'
-        env:
-          CMAKE_ARGS: "-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
         run: uv pip install --no-build-isolation ".[testing]"
         shell: bash
 
       - name: Build and install Python bindings (shim)
         if: matrix.backend == 'shim'
-        env:
-          CMAKE_ARGS: "-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
         run: uv pip install --no-build-isolation "./shim/python[testing]"
         shell: bash
 

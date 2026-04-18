@@ -66,7 +66,15 @@ jobs:
           echo "/opt/cmake/bin" >> $GITHUB_PATH
 
       - name: Set up sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+
+      - name: Export sccache launcher
+        if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SCCACHE_LAUNCHER=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
 
       - name: Export GitHub Actions cache env for vcpkg
         uses: actions/github-script@v7
@@ -107,8 +115,8 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake --preset=default -DVCPKG_TARGET_TRIPLET=${{matrix.vcpkg_triplet}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-          cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          cmake --preset=default -DVCPKG_TARGET_TRIPLET=${{matrix.vcpkg_triplet}} ${{ env.SCCACHE_LAUNCHER }}
+          cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ env.SCCACHE_LAUNCHER }}
 
       - name: Build
         run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
@@ -141,7 +149,16 @@ jobs:
           cmake-version: "3.31.x"
 
       - name: Set up sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+
+      - name: Export sccache launcher
+        if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SCCACHE_LAUNCHER=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
+          echo "CMAKE_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
 
       - name: Install minio and mcli
         run: |
@@ -197,8 +214,8 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake --preset=default -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-          cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          cmake --preset=default ${{ env.SCCACHE_LAUNCHER }}
+          cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ env.SCCACHE_LAUNCHER }}
 
       - name: Build
         run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
@@ -224,8 +241,6 @@ jobs:
         shell: bash
 
       - name: Build and install Python bindings
-        env:
-          CMAKE_ARGS: "-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
         run: uv pip install --no-build-isolation ".[testing]"
         shell: bash
 
@@ -297,7 +312,15 @@ jobs:
           brew install libomp
 
       - name: Set up sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+
+      - name: Export sccache launcher
+        if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          echo "CMAKE_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -306,8 +329,6 @@ jobs:
         shell: bash
 
       - name: Build and install Python bindings
-        env:
-          CMAKE_ARGS: "-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
         run: uv pip install --no-build-isolation ".[testing]"
         shell: bash
 
