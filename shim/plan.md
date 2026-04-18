@@ -210,15 +210,35 @@ paths. Overflow drops oldest silently and reports a count as a
 
 ## Remaining Work
 
+### Known issues (triage separately)
+
+- **Windows shim benchmark**: `zarr.open(az_path)` on a shim-written zarr
+  fails with `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80 in
+  position 599` reading `zarr.json`. Ubuntu + ARM writes produce a
+  zarr-python-readable store on the same run. Excluded via matrix
+  `exclude:` in `.github/workflows/benchmark.yml`. Likely a
+  Windows-specific `zarr.json` write path issue in chucky's `store_fs` or
+  `zarr_metadata` module.
+- **macOS shim benchmark** (both arm + intel): FindOpenMP + chucky's
+  `enable_openmp()` don't cooperate on Apple clang when the shim wheel is
+  built standalone. Tried space-string then list form for
+  `OpenMP_C_FLAGS`; both produce a miscomposed compile command
+  (`-Xclang -MD`, `-MF ... unused`). Baseline path works because
+  `OpenMP::OpenMP_C` is used directly in the baseline build. Excluded via
+  matrix `exclude:`.
+- **Windows `test_append_throws_on_overflow`**: test passes but takes
+  ~10 min end-to-end only on Windows (fast elsewhere). Skipped on Windows
+  via `@pytest.mark.skipif(os.name == "nt")`. Suspected chucky destroy-path
+  slowness or Python-logging interaction specific to Windows; neither
+  removing `set_log_level(DEBUG)` nor setting logger `propagate=False` on
+  `acquire_zarr` fixed it.
+
 ### Nice-to-haves
 
-- GPU-dependent tests once CPU testing looks good.
-- Benchmark the chucky-backed shim against baseline acquire-zarr.
-  `.github/workflows/benchmark.yml` today only builds the baseline (root
-  `CMakeLists.txt` → `src/` + `python/`) and only triggers on push/PR to
-  `main`, so there is no shim-vs-baseline perf comparison in CI. Add a job
-  (or a flag) that installs the shim wheel (`shim/python`) alongside the
-  baseline and runs `benchmarks/benchmark.py` against both.
+- GPU-dependent tests on the self-hosted `[self-hosted, gpu]` runner
+  registered for the `acquire-project` org (auk laptop). Approach TBD:
+  `docker compose` via `shim/Dockerfile.gpu`, or native via chucky's inner
+  nix flake (nvcc 12.9).
 
 ## CI
 
