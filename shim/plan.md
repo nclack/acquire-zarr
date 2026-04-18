@@ -1,6 +1,6 @@
 # Shim Implementation Plan
 
-## Current State (2026-04-17)
+## Current State (2026-04-18)
 
 All 17 integration tests passing (all original acquire-zarr tests ported):
 - `stream-raw-to-filesystem` — PASS
@@ -47,8 +47,9 @@ is how production acquisitions should configure chunks.
 On main, including GPU multiarray writer (#81), shared-LOD split (#82),
 CPU multiarray heap-overflow fixes (#83), the public log header (#87),
 the `zarr_write_attribute` API (#88), `store_has_existing_data` (#89),
-and idempotent multiarray flush (#91). The two local fixes previously
-listed here have been upstreamed.
+idempotent multiarray flush (#91), and the explicit stream commit
+point (#92). The two local fixes previously listed here have been
+upstreamed.
 
 #88 and #89 add the primitives needed to close divergences #5 and #6
 respectively; wiring on the shim side is still pending (see Remaining Work).
@@ -189,11 +190,23 @@ c2be1a6 on main. Blosc-LZ4 is still supported.
 C API `Zarr_set_log_level` forwards to `chucky_log_set_level` /
 `chucky_log_set_quiet` (gates chucky's stderr sink).
 
-Python module registers a `chucky_log_add_callback` at import that routes
-events into `logging.getLogger("acquire_zarr")` and calls
-`chucky_log_set_quiet(1)` to silence chucky's stderr. Python users control
-verbosity via `logging` — `Zarr_set_log_level` still round-trips but no
-longer affects output.
+Python module registers a `chucky_log_add_callback` at import and calls
+`chucky_log_set_quiet(1)` to silence chucky's stderr. Python users
+control verbosity via `logging` — `Zarr_set_log_level` still round-trips
+but no longer affects output.
+
+Chucky callbacks fire on arbitrary threads (including IO workers that
+run while the main thread has released the GIL). Delivering events
+straight into Python from the producer thread is a deadlock risk: if
+the Python handler blocks (e.g. on pytest's captured-stderr pipe) while
+the main thread is waiting on an IO fence, the worker never retires its
+job and nothing drains the pipe. The producer-side callback therefore
+pushes events into a bounded mutex-protected ring and never touches
+Python; a `drain_log_ring()` runs on the Python thread (GIL held) from
+an RAII `LogDrainGuard` placed at the top of each bound method, so
+events reach Python on both normal and exception-propagating return
+paths. Overflow drops oldest silently and reports a count as a
+`warning`. See `python/acquire-zarr-py.cpp`.
 
 ## Remaining Work
 
@@ -205,83 +218,40 @@ longer affects output.
 - Honor `settings->overwrite=false` via chucky's `store_has_existing_data`
   (#89). Call at stream create; return `WillNotOverwrite` on hit.
 - gpu-dependent tests once cpu testing looks good
-
-## CPU wheel (Phase 1 — done)
-
-- `shim/pybind/CMakeLists.txt` — pybind11 module linked against the selected
-  backend (`acquire-zarr-chucky-cpu` or `acquire-zarr-chucky-gpu`)
-- `shim/CMakeLists.txt` — `BUILD_PYTHON` option gates the pybind subdirectory
-- `shim/python/pyproject.toml` + `setup.py` — package `acquire-zarr-cpu`, no vcpkg
-- `shim/Dockerfile` — `wheel-deps` stage builds lz4/zstd/blosc/aws from source as
-  static+PIC libs; `wheel-build` stage runs `python -m build`; `wheel` stage exports `.whl`
-- Build: `docker build -f shim/Dockerfile --target wheel --output wheels .`
-- Tested: import, create stream, write frames, verify Zarr output
-- Runtime dep: `libgomp1` (OpenMP)
-- Fixed `python/acquire-zarr-py.cpp` lambda deleter → struct for C++17 compat
-
-## GPU wheel (Phase 2 — done)
-
-`multiarray_gpu` landed in chucky as #81/#82/#83. Built on top via:
-
-- `shim/shim_backend.h` — preprocessor dispatch; one header swaps
-  `multiarray_tile_stream_create/destroy/writer`, `tile_stream_memory_estimate`,
-  and the memory-info typedef/total-bytes macro based on `SHIM_BACKEND_GPU`.
-- `shim/shim.c` / `shim/shim_internal.h` now use the backend-agnostic names
-  (3 call sites + 2 includes + 2 type refs replaced).
-- `shim/CMakeLists.txt` — conditional `acquire-zarr-chucky-gpu` static lib
-  compiles the same three sources with `SHIM_BACKEND_GPU=1` and links
-  chucky's `stream` (GPU) + `multiarray_gpu`.
-- `shim/python-gpu/pyproject.toml` + `setup.py` — package `acquire-zarr-gpu`;
-  setup.py passes `-DCHUCKY_ENABLE_GPU=ON -DCMAKE_CUDA_ARCHITECTURES=80;86;89;90;100`
-  and uses `build-wheel-gpu/` so CPU and GPU builds don't collide.
-- `shim/Dockerfile.gpu` — `nvidia/cuda:12.8.0-devel-ubuntu24.04` base,
-  nvcomp 5.1 from NVIDIA's redist tarball at `/opt/nvcomp`, reuses the same
-  PIC from-source builds of lz4/zstd/blosc/aws-c-* as the CPU image.
-- Build: `docker build -f shim/Dockerfile.gpu --target wheel --output wheels-gpu .`
-- Integration tests still link CPU only (no GPU runner in CI).
+- Benchmark the chucky-backed shim against baseline acquire-zarr.
+  `.github/workflows/benchmark.yml` today only builds the baseline (root
+  `CMakeLists.txt` → `src/` + `python/`) and only triggers on push/PR to
+  `main`, so there is no shim-vs-baseline perf comparison in CI. Add a job
+  (or a flag) that installs the shim wheel (`shim/python`) alongside the
+  baseline and runs `benchmarks/benchmark.py` against both.
 
 ## CI
 
-- `.github/workflows/test-shim.yml` — runs `docker compose run --rm test`
+- `.github/workflows/test-shim.yml` — runs `docker compose run --rm test`,
   which brings up minio alongside the test container and invokes
-  `ctest -L shim` (only shim-labeled tests). Triggers: push to `main`,
-  PRs to `main`. The `test` service in `shim/docker-compose.yml` has no
-  GPU device requirement (shim has no GPU tests yet). `uv` is installed
-  in `shim/Dockerfile` so chucky's `test_ome_validate` also works when
-  someone runs `docker build --target test` locally. The build uses
-  BuildKit's GHA layer cache (`cache_from`/`cache_to: type=gha`) so the
-  from-source aws-c-* / lz4 / zstd / blosc layers are reused across runs.
-- `.github/workflows/wheels.yml` — two parallel jobs (`cpu-wheel`,
-  `gpu-wheel`) that build the Dockerfiles and upload the resulting `.whl`
-  files as workflow artifacts. Triggers: push to `main`, push to `shim`,
-  manual `workflow_dispatch`. No publishing.
+  `ctest -L shim`. Triggers: push to `main`, PRs to `main`. No GPU tests
+  yet. BuildKit GHA layer cache reuses from-source aws-c-* / lz4 / zstd /
+  blosc layers across runs.
+- `.github/workflows/wheels.yml` — parallel `cpu-wheel` and `gpu-wheel`
+  jobs build the Dockerfiles and upload `.whl` artifacts. Triggers: push
+  to `main`, push to `shim`, manual `workflow_dispatch`. No publishing.
 - `python/acquire-zarr-py.cpp` gates its chucky log callback behind
-  `#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG`, which only `shim/pybind/CMakeLists.txt`
-  defines — so the baseline `build.yml` / `benchmark.yml` / `release.yml`
-  pipelines that compile the shared pybind source without chucky still work.
-
-### Cross-cutting CI speedups
-
-- `VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"` + the GHA cache env
-  exporter step in every vcpkg-using workflow (`test.yml`, `benchmark.yml`,
-  `build.yml`, `release.yml`) so vcpkg's built packages are cached across
-  jobs and runs.
-- `actions/cache` on the vcpkg clone (excluding `downloads/`, `buildtrees/`,
-  `packages/`, `installed/`) keyed by `vcpkg-<tag>-<os>-<arch>`, so the
-  bootstrap itself is reused across runs.
-- Python CI is fully uv-native: `astral-sh/setup-uv@v4` with `python-version`
-  installs uv's managed Python (no `actions/setup-python` step), jobs create
-  a venv with `uv venv`, install deps with `uv pip install` (scoped to the
-  venv), and run tests/scripts via `uv run --no-sync`. Wheel builds use
-  `uv build --wheel --out-dir dist` in place of `python -m build`.
-- Python project install uses `--no-build-isolation` so the PEP 517
-  isolated venv doesn't re-download build deps per job; `ninja`,
-  `setuptools`, and `wheel` are pre-installed alongside `pybind11[global]`
-  and `cmake<4.0.0`.
+  `#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG`, which only
+  `shim/pybind/CMakeLists.txt` defines — so the baseline `build.yml` /
+  `benchmark.yml` / `release.yml` pipelines that compile the shared
+  pybind source without chucky still work.
 - `tests/integration/s3-test-helpers.hh` has two backends selected by
-  `-DS3_TEST_HELPERS_USE_AWS_CLI`: miniocpp (default, used by the baseline
-  vcpkg build on all platforms incl. Windows) and `aws` CLI via `popen`
-  (used by the shim Linux-docker build, which intentionally avoids vcpkg).
+  `-DS3_TEST_HELPERS_USE_AWS_CLI`: miniocpp (default, used by the
+  baseline vcpkg build on all platforms incl. Windows) and `aws` CLI via
+  `popen` (used by the shim Linux-docker build, which avoids vcpkg).
+- Python test job (`test-python` in `test.yml`) runs pytest under
+  `pytest-timeout` — `--timeout-method=signal` on POSIX (SIGALRM can
+  preempt C-extension hangs and emit a traceback), `--timeout-method=thread`
+  on Windows (signal method not supported). Job-level
+  `timeout-minutes: 25` caps runaway runners at 25m rather than GitHub's
+  6h default. `test_anisotropic_downsampling` carries an explicit
+  `@pytest.mark.timeout(300)` because it writes ~4 GB and is legitimately
+  slow on Windows.
 
 ## Files
 
