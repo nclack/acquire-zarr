@@ -7,10 +7,6 @@ on:
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Runner-shipped CMake is 4.x on macOS. vcpkg ports with ancient
-  # cmake_minimum_required (e.g. snappy) are rejected by CMake 4 unless
-  # this policy floor is set.
-  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   build:
@@ -57,9 +53,11 @@ jobs:
         with:
           submodules: true
 
-      - name: Check CMake version
-        shell: bash
-        run: cmake --version
+      - uses: ./.github/actions/setup-cmake
+
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
 
       - uses: ./.github/actions/setup-vcpkg
 
@@ -135,10 +133,17 @@ jobs:
         with:
           submodules: true
 
+      - uses: ./.github/actions/setup-cmake
+        if: ${{ !startsWith(matrix.platform, 'ubuntu') }}
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
 
       # vcpkg is installed inside the manylinux image for ubuntu builds
       # (see CIBW_BEFORE_BUILD below), so skip on ubuntu here.

@@ -17,10 +17,6 @@ on:
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   SCCACHE_GHA_ENABLED: "true"
-  # Runner-shipped CMake is 4.x on macOS. vcpkg ports with ancient
-  # cmake_minimum_required (e.g. snappy) are rejected by CMake 4 unless
-  # this policy floor is set.
-  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   run-benchmark:
@@ -81,10 +77,16 @@ jobs:
           # back to workflow_run.head_sha (the PR head that triggered Tests).
           ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
 
+      - uses: ./.github/actions/setup-cmake
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13.3"
+
+      - name: Configure macOS SDK root
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
 
       - uses: ./.github/actions/setup-vcpkg
 
@@ -99,7 +101,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv
-          uv pip install "pybind11[global]" "cmake<4.0.0" ninja setuptools wheel tensorstore click rich psutil
+          uv pip install "pybind11[global]" ninja setuptools wheel tensorstore click rich psutil
         shell: bash
 
       - name: Build and install Python bindings (baseline)
