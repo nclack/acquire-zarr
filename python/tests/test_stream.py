@@ -1766,6 +1766,10 @@ def test_single_2d_image(store_path: Path, request: pytest.FixtureRequest):
     np.testing.assert_array_equal(data, array)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows-only slowness: test passes but takes ~10 min. Triage separately.",
+)
 def test_append_throws_on_overflow(
     store_path: Path, request: pytest.FixtureRequest
 ):
