@@ -37,7 +37,9 @@ add_subdirectory(chucky)
 
 # --- shim library --------------------------------------------------------
 
-set(shim_sources shim.c shim_log.c shim_convert.c shim_sink.c)
+set(shim_sources
+    shim.c shim_log.c shim_settings.c shim_util.c
+    shim_convert.c shim_sink.c)
 set(shim_non_backend_libs
     store_api store_fs store_s3 zarr_array zarr_group ngff_multiscale
     hcs hcs_metadata
