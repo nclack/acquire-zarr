@@ -43,18 +43,6 @@ jobs:
         backend:
           - "baseline"
           - "shim"
-        exclude:
-          # Windows shim: zarr-python read of shim-emitted zarr.json fails
-          # with a UTF-8 decode error (see shim/plan.md). Triage separately.
-          - platform: "windows-latest"
-            backend: "shim"
-          # macOS shim: FindOpenMP + chucky's enable_openmp() don't cooperate
-          # on Apple clang when the shim wheel is built standalone (baseline
-          # path works). Triage separately.
-          - platform: "macos-latest"
-            backend: "shim"
-          - platform: "macos-15-intel"
-            backend: "shim"
         include:
           - platform: "ubuntu-latest"
             vcpkg_triplet: "x64-linux"
