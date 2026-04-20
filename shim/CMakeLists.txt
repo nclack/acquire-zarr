@@ -63,6 +63,13 @@ target_compile_definitions(acquire-zarr-chucky-cpu PRIVATE
     ACQUIRE_ZARR_API_VERSION="0.6.0"
 )
 
+# MSVC gates <stdatomic.h> behind an experimental flag; the shim uses C11
+# atomics for the log-level guard.
+if(MSVC)
+    target_compile_options(acquire-zarr-chucky-cpu PRIVATE
+        /experimental:c11atomics)
+endif()
+
 set_target_properties(acquire-zarr-chucky-cpu PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -84,6 +91,11 @@ if(CHUCKY_ENABLE_GPU)
         ACQUIRE_ZARR_API_VERSION="0.6.0"
         SHIM_BACKEND_GPU=1
     )
+
+    if(MSVC)
+        target_compile_options(acquire-zarr-chucky-gpu PRIVATE
+            /experimental:c11atomics)
+    endif()
 
     set_target_properties(acquire-zarr-chucky-gpu PROPERTIES
         POSITION_INDEPENDENT_CODE ON
