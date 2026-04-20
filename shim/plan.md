@@ -178,10 +178,10 @@ paths. Overflow drops oldest silently and reports a count as a
 
 ## CI (shim tests)
 
-`test-shim.yml` runs three jobs:
+`test-shim.yml` runs four jobs:
 - **linux**: `docker compose run --rm test` — builds the Docker image
   and runs the full `ctest -L shim` suite with minio for S3. This is
-  the only place S3 tests run.
+  one of two places S3 tests run (the other is gpu).
 - **macos** (macos-latest, arm): native build via micromamba
   (`mamba-org/setup-micromamba@v2`) using the conda-forge packages
   `aws-c-s3 blosc lz4-c zstd llvm-openmp snappy zlib nlohmann_json`.
@@ -189,9 +189,15 @@ paths. Overflow drops oldest silently and reports a count as a
 - **windows** (windows-latest): same micromamba pattern + MSVC
   (`ilammy/msvc-dev-cmd@v1`, arch x64); points `CMAKE_PREFIX_PATH` at
   `$CONDA_PREFIX/Library`. Also runs `ctest -L shim -LE s3`.
+- **gpu** (self-hosted `[self-hosted, Linux, gpu]`): `docker compose
+  run --rm test-gpu` — builds the CUDA 12.8 + nvcomp 5.1 image from
+  `shim/Dockerfile.gpu` (`test-build` stage), mounts the GPU via CDI
+  (`nvidia.com/gpu=all`), brings up minio, runs the full `ctest -L
+  shim` suite against the GPU backend. Mirrors chucky's own gpu-tests
+  job.
 
-The macos/windows jobs mirror chucky's own `ci.yml` pattern so the two
-repos stay in sync on platform support.
+The macos/windows/gpu jobs mirror chucky's own `ci.yml` pattern so the
+two repos stay in sync on platform support.
 
 Note on OpenMP: `shim/CMakeLists.txt` still pre-seeds `FindOpenMP`
 variables for Homebrew's keg-only libomp (needed by the benchmark
@@ -201,12 +207,8 @@ fight with conda's `llvm-openmp`.
 
 ## Remaining Work
 
-### Nice-to-haves
-
-- GPU-dependent tests on the self-hosted `[self-hosted, gpu]` runner
-  registered for the `acquire-project` org (auk laptop). Approach TBD:
-  `docker compose` via `shim/Dockerfile.gpu`, or native via chucky's inner
-  nix flake (nvcc 12.9).
+Nothing outstanding on the shim side. GPU CI was the last nice-to-have
+and is now wired.
 
 ## Files
 

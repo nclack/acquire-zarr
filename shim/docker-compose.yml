@@ -38,3 +38,27 @@ services:
         ctest --test-dir shim/build -L shim --output-on-failure
       "
     init: true
+
+  test-gpu:
+    build:
+      context: ..
+      dockerfile: shim/Dockerfile.gpu
+      target: test-build
+    devices:
+      - nvidia.com/gpu=all
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_ENDPOINT_URL: "http://minio:9000"
+      AWS_DEFAULT_REGION: "us-east-1"
+      ZARR_S3_ENDPOINT: "http://minio:9000"
+      ZARR_S3_BUCKET_NAME: "test-bucket"
+    command: >
+      bash -c "
+        aws s3 mb s3://test-bucket 2>/dev/null || true &&
+        ctest --test-dir shim/build -L shim --output-on-failure
+      "
+    init: true

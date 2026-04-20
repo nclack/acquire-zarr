@@ -73,3 +73,28 @@ RUN /venv/bin/python -m build --wheel --outdir /wheels /src/shim/python-gpu
 
 FROM scratch AS wheel
 COPY --from=wheel-build /wheels/*.whl /
+
+# --- GPU ctest build ------------------------------------------------------
+# Builds the shim with CHUCKY_ENABLE_GPU=ON for the integration test suite.
+# Runs on a self-hosted GPU runner via docker-compose (see shim/docker-compose.yml).
+
+FROM wheel-deps AS test-build
+
+# AWS CLI for S3 integration tests + bucket creation.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -qO /tmp/awscliv2.zip \
+        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws
+
+WORKDIR /src
+COPY . .
+
+ARG CMAKE_BUILD_TYPE=Release
+RUN cmake -S shim -B shim/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+        -DCHUCKY_ENABLE_GPU=ON \
+    && cmake --build shim/build

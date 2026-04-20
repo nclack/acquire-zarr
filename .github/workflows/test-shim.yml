@@ -140,3 +140,23 @@ jobs:
           eval "$(micromamba shell hook --shell bash)"
           micromamba activate ci
           ctest -L shim -LE s3 --output-on-failure
+
+  # Linux + GPU: self-hosted runner with CUDA. docker compose brings up
+  # minio alongside a GPU-enabled test container (CDI passthrough).
+  test-gpu:
+    name: Shim (linux, gpu)
+    runs-on: [self-hosted, Linux, gpu]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build and test (GPU)
+        working-directory: shim
+        run: docker compose run --rm test-gpu
+
+      - name: Cleanup
+        if: always()
+        working-directory: shim
+        run: docker compose down
