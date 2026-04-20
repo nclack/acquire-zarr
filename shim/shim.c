@@ -91,7 +91,10 @@ ZarrStream_create(ZarrStreamSettings* settings)
         }
     }
 
-    stream->store->mkdirs(stream->store, ".");
+    // Ensure the filesystem store root exists; no-op on S3. store_fs_create
+    // does not mkdir the root on its own. Empty key yields "<root>/" via
+    // snprintf("%s/%s",root,key), which platform_mkdirp creates as <root>.
+    stream->store->mkdirs(stream->store, "");
 
     // Count total arrays
     size_t total_arrays = ZarrStreamSettings_get_array_count(settings);
