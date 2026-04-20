@@ -4,6 +4,7 @@
 #include "shim_hcs_json.h"
 #include "shim_util.h"
 
+#include "util/prelude.h"
 #include "zarr/store.h"
 #include "zarr/zarr_group.h"
 
@@ -43,7 +44,7 @@ cleanup:
 }
 
 // Write "<plate_path>/<row_name>/zarr.json" with an empty `{}` attribute
-// body. Returns 0 on success, 1 on failure. mkdirs is best-effort.
+// body. Returns 0 on success, 1 on failure.
 static int
 write_row_group(struct store* store,
                 const char* plate_path,
@@ -52,16 +53,12 @@ write_row_group(struct store* store,
     char* row_dir = shim_alloc_printf("%s/%s", plate_path, row_name);
     char* key = NULL;
     int rc = 1;
-    if (!row_dir) {
-        goto cleanup;
-    }
-    store->mkdirs(store, row_dir);
+    CHECK(cleanup, row_dir);
+    CHECK(cleanup, store->mkdirs(store, row_dir) == 0);
 
     key = shim_alloc_printf("%s/zarr.json", row_dir);
-    if (!key) {
-        goto cleanup;
-    }
-    zarr_group_write_with_raw_attrs(store, key, "{}");
+    CHECK(cleanup, key);
+    CHECK(cleanup, zarr_group_write_with_raw_attrs(store, key, "{}") == 0);
     rc = 0;
 
 cleanup:
@@ -133,46 +130,44 @@ create_plate(struct ZarrStream_s* stream,
              const ZarrHCSPlate* plate,
              size_t* array_idx)
 {
-    // Write root group (idempotent; may have been written already).
-    zarr_group_write_with_raw_attrs(stream->store, "zarr.json", "{}");
-
     const char* plate_path = plate->path ? plate->path : "plate";
-    stream->store->mkdirs(stream->store, plate_path);
+    char* well_dir = NULL;
+    int rc = 0;
 
-    if (write_plate_group_metadata(stream->store, plate_path, plate) != 0) {
-        return 0;
-    }
+    CHECK(cleanup,
+          stream->store->mkdirs(stream->store, plate_path) == 0);
+    CHECK(cleanup,
+          write_plate_group_metadata(stream->store, plate_path, plate) == 0);
 
     for (size_t w = 0; w < plate->well_count; ++w) {
         const ZarrHCSWell* well = &plate->wells[w];
 
-        if (write_row_group(stream->store, plate_path, well->row_name) != 0) {
-            return 0;
-        }
+        CHECK(cleanup,
+              write_row_group(stream->store, plate_path, well->row_name) == 0);
 
-        char* well_dir = shim_alloc_printf(
+        well_dir = shim_alloc_printf(
           "%s/%s/%s", plate_path, well->row_name, well->column_name);
-        if (!well_dir) {
-            return 0;
-        }
-        stream->store->mkdirs(stream->store, well_dir);
-        int well_rc = write_well_group_metadata(stream->store, well_dir, well);
+        CHECK(cleanup, well_dir);
+        CHECK(cleanup, stream->store->mkdirs(stream->store, well_dir) == 0);
+        CHECK(cleanup,
+              write_well_group_metadata(stream->store, well_dir, well) == 0);
         free(well_dir);
-        if (well_rc != 0) {
-            return 0;
-        }
+        well_dir = NULL;
 
         for (size_t f = 0; f < well->image_count; ++f) {
             struct shim_array* sa = &stream->arrays[*array_idx];
-            if (!create_fov_array(
-                  stream, plate_path, well, &well->images[f], sa)) {
-                return 0;
-            }
+            CHECK(cleanup,
+                  create_fov_array(
+                    stream, plate_path, well, &well->images[f], sa));
             ++(*array_idx);
         }
     }
 
-    return 1;
+    rc = 1;
+
+cleanup:
+    free(well_dir);
+    return rc;
 }
 
 int

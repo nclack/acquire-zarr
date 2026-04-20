@@ -105,7 +105,11 @@ ZarrStream_create(ZarrStreamSettings* settings)
     }
 
     // Write root group
-    zarr_group_write_with_raw_attrs(stream->store, "zarr.json", "{}");
+    if (zarr_group_write_with_raw_attrs(stream->store, "zarr.json", "{}") !=
+        0) {
+        log_error("failed to write root group zarr.json");
+        goto fail;
+    }
 
     // Create flat arrays
     for (size_t i = 0; i < settings->array_count; ++i) {
