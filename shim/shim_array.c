@@ -5,27 +5,45 @@
 
 #include "log/log.h"
 #include "multiarray/multiarray.h"
+#include "util/prelude.h"
 #include "zarr/store.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+// Reset the fields this module owns (everything except sa->key) to a
+// zeroed / SINK_NONE state so shim_array_destroy is safe to call whether
+// or not the configure helpers ran to completion.
+static void
+reset_owned_fields(struct shim_array* sa)
+{
+    free(sa->dims);
+    free(sa->axes);
+    sa->rank = 0;
+    sa->dims = NULL;
+    sa->axes = NULL;
+    sa->frame_bytes = 0;
+    sa->sink = (struct shim_sink){ .kind = SHIM_SINK_NONE };
+    memset(&sa->config, 0, sizeof(sa->config));
+}
 
 int
 shim_configure_multiscale_array(struct ZarrStream_s* stream,
                                 const ZarrArraySettings* as,
                                 struct shim_array* sa)
 {
+    // sa->key is caller-owned; everything else is ours. Zero-init at
+    // entry and free-and-null on any failure so the struct is equivalent
+    // to a fresh calloc() regardless of what the caller passed in.
+    reset_owned_fields(sa);
+
     sa->rank = (uint8_t)as->dimension_count;
     sa->dims = shim_convert_dimensions(
       as->dimensions, as->dimension_count, as->storage_dimension_order, true);
-    if (!sa->dims) {
-        return 0;
-    }
+    CHECK(Fail, sa->dims);
 
     sa->axes = shim_convert_ngff_axes(as->dimensions, as->dimension_count);
-    if (!sa->axes) {
-        return 0;
-    }
+    CHECK(Fail, sa->axes);
 
     enum dtype dt = shim_convert_dtype(as->data_type);
     struct codec_config codec = shim_convert_codec(as->compression_settings);
@@ -43,12 +61,11 @@ shim_configure_multiscale_array(struct ZarrStream_s* stream,
         .codec = codec,
         .axes = sa->axes,
     };
-    sa->sink.kind = SHIM_SINK_MULTISCALE;
-    sa->sink.multiscale =
+    struct ngff_multiscale* ms =
       ngff_multiscale_create(stream->store, sa->key, &ms_cfg);
-    if (!sa->sink.multiscale) {
-        return 0;
-    }
+    CHECK(Fail, ms);
+    sa->sink.kind = SHIM_SINK_MULTISCALE;
+    sa->sink.multiscale = ms;
 
     sa->config = (struct tile_stream_configuration){
         .buffer_capacity_bytes = sa->frame_bytes,
@@ -66,6 +83,10 @@ shim_configure_multiscale_array(struct ZarrStream_s* stream,
     };
 
     return 1;
+
+Fail:
+    reset_owned_fields(sa);
+    return 0;
 }
 
 int
@@ -73,23 +94,23 @@ shim_create_flat_array(struct ZarrStream_s* stream,
                        const ZarrArraySettings* as,
                        struct shim_array* sa)
 {
+    reset_owned_fields(sa);
+
     if (as->output_key) {
+        free(sa->key);
         sa->key = strdup(as->output_key);
-        if (!sa->key) {
-            return 0;
-        }
+        CHECK(Fail, sa->key);
     }
 
     if (as->multiscale) {
+        // Delegate; multiscale helper resets owned fields on failure.
         return shim_configure_multiscale_array(stream, as, sa);
     }
 
     sa->rank = (uint8_t)as->dimension_count;
     sa->dims = shim_convert_dimensions(
       as->dimensions, as->dimension_count, as->storage_dimension_order, false);
-    if (!sa->dims) {
-        return 0;
-    }
+    CHECK(Fail, sa->dims);
 
     enum dtype dt = shim_convert_dtype(as->data_type);
     struct codec_config codec = shim_convert_codec(as->compression_settings);
@@ -108,19 +129,16 @@ shim_create_flat_array(struct ZarrStream_s* stream,
 
     // Write intermediate group zarr.json for each path component and ensure
     // the leaf directory exists for zarr_array_create.
-    if (shim_write_intermediate_groups(stream->store, sa->key) != 0) {
-        return 0;
-    }
-    if (sa->key && stream->store->mkdirs(stream->store, sa->key) != 0) {
-        log_error("mkdirs failed for array directory '%s'", sa->key);
-        return 0;
+    CHECK(Fail, shim_write_intermediate_groups(stream->store, sa->key) == 0);
+    if (sa->key) {
+        CHECK(Fail, stream->store->mkdirs(stream->store, sa->key) == 0);
     }
 
+    struct zarr_array* arr =
+      zarr_array_create(stream->store, sa->key, &arr_cfg);
+    CHECK(Fail, arr);
     sa->sink.kind = SHIM_SINK_ARRAY;
-    sa->sink.array = zarr_array_create(stream->store, sa->key, &arr_cfg);
-    if (!sa->sink.array) {
-        return 0;
-    }
+    sa->sink.array = arr;
 
     sa->config = (struct tile_stream_configuration){
         .buffer_capacity_bytes = sa->frame_bytes,
@@ -138,6 +156,10 @@ shim_create_flat_array(struct ZarrStream_s* stream,
     };
 
     return 1;
+
+Fail:
+    reset_owned_fields(sa);
+    return 0;
 }
 
 void
