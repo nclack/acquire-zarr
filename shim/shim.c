@@ -234,36 +234,41 @@ ZarrStream_append(ZarrStream* stream,
         return ZarrStatusCode_InvalidArgument;
     }
 
-    // NULL data means "write zeros" — allocate a zeroed frame
-    const void* frame = data;
-    void* zeros = NULL;
-    if (!data) {
-        zeros = calloc(1, bytes_in);
-        if (!zeros) {
-            return ZarrStatusCode_OutOfMemory;
-        }
-        frame = zeros;
-    }
+    // NULL data means "write zeros". Chucky has no fast zero path, so we
+    // stream zeros from a small static buffer instead of allocating a full
+    // zero frame (frames can be multi-GB). Read-only const bss is
+    // thread-safe.
+    static const char zero_buf[4096] = { 0 };
 
-    const char* cur = (const char*)frame;
-    const char* end = cur + bytes_in;
+    size_t remaining = bytes_in;
     ZarrStatusCode rc = ZarrStatusCode_Success;
 
-    while (cur < end) {
-        struct slice s = { .beg = cur, .end = end };
+    while (remaining > 0) {
+        const char* slice_beg;
+        size_t slice_len;
+        if (data) {
+            slice_beg = (const char*)data + (bytes_in - remaining);
+            slice_len = remaining;
+        } else {
+            slice_beg = zero_buf;
+            slice_len =
+              remaining < sizeof(zero_buf) ? remaining : sizeof(zero_buf);
+        }
+        struct slice s = { .beg = slice_beg, .end = slice_beg + slice_len };
         struct multiarray_writer_result r =
           stream->writer->update(stream->writer, array_index, s);
 
         const char* rest_beg = (const char*)r.rest.beg;
-        const char* next = rest_beg ? rest_beg : end;
+        size_t consumed =
+          rest_beg ? (size_t)(rest_beg - slice_beg) : slice_len;
 
         if (r.error == multiarray_writer_finished) {
             // Chucky returns `finished` both for natural completion and for
             // post-capacity appends (as a silent no-op). Distinguish: if the
             // writer failed to consume the full input, the caller tried to
             // write past the array's capacity.
-            cur = next;
-            if (cur < end) {
+            remaining -= consumed;
+            if (remaining > 0) {
                 rc = ZarrStatusCode_WriteOutOfBounds;
             }
             break;
@@ -287,18 +292,15 @@ ZarrStream_append(ZarrStream* stream,
             rc = ZarrStatusCode_InternalError;
             break;
         }
-        if (next <= cur) {
+        if (consumed == 0) {
             // Writer reported ok without advancing — guard against a spin.
             rc = ZarrStatusCode_InternalError;
             break;
         }
-        cur = next;
+        remaining -= consumed;
     }
 
-    size_t consumed = (size_t)(cur - (const char*)frame);
-    free(zeros);
-
-    *bytes_out = consumed;
+    *bytes_out = bytes_in - remaining;
     return rc;
 }
 
