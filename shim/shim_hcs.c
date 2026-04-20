@@ -4,11 +4,73 @@
 #include "shim_hcs_json.h"
 #include "shim_util.h"
 
+#include "log/log.h"
 #include "util/prelude.h"
 #include "zarr/store.h"
 #include "zarr/zarr_group.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
+
+// Validate that every well's row_name / column_name appears in the plate's
+// row_names / column_names lists. Without this, shim_hcs_plate_attributes_json
+// would silently emit rowIndex/columnIndex=-1 into the plate JSON, producing
+// output that fails OME-NGFF validation downstream.
+static int
+validate_plate(const ZarrHCSPlate* plate)
+{
+    if (plate->well_count > 0 &&
+        (!plate->row_names || plate->row_count == 0)) {
+        log_error("HCS plate has wells but no row_names configured");
+        return 0;
+    }
+    if (plate->well_count > 0 &&
+        (!plate->column_names || plate->column_count == 0)) {
+        log_error("HCS plate has wells but no column_names configured");
+        return 0;
+    }
+
+    for (size_t w = 0; w < plate->well_count; ++w) {
+        const ZarrHCSWell* well = &plate->wells[w];
+
+        if (!well->row_name || !well->column_name) {
+            log_error("HCS well[%zu] missing row_name or column_name", w);
+            return 0;
+        }
+
+        bool row_ok = false;
+        for (size_t r = 0; r < plate->row_count; ++r) {
+            if (plate->row_names[r] &&
+                strcmp(plate->row_names[r], well->row_name) == 0) {
+                row_ok = true;
+                break;
+            }
+        }
+        if (!row_ok) {
+            log_error("HCS well[%zu] row '%s' not in plate row_names",
+                      w,
+                      well->row_name);
+            return 0;
+        }
+
+        bool col_ok = false;
+        for (size_t c = 0; c < plate->column_count; ++c) {
+            if (plate->column_names[c] &&
+                strcmp(plate->column_names[c], well->column_name) == 0) {
+                col_ok = true;
+                break;
+            }
+        }
+        if (!col_ok) {
+            log_error("HCS well[%zu] column '%s' not in plate column_names",
+                      w,
+                      well->column_name);
+            return 0;
+        }
+    }
+    return 1;
+}
 
 // Write "<plate_path>/zarr.json" with OME plate attributes. Returns 0 on
 // success, 1 on failure. Owns all intermediate buffers.
@@ -176,6 +238,12 @@ shim_create_hcs_arrays(struct ZarrStream_s* stream,
                        size_t* array_idx)
 {
     const ZarrHCSSettings* hcs = settings->hcs_settings;
+
+    for (size_t p = 0; p < hcs->plate_count; ++p) {
+        if (!validate_plate(&hcs->plates[p])) {
+            return 0;
+        }
+    }
 
     for (size_t p = 0; p < hcs->plate_count; ++p) {
         if (!create_plate(stream, &hcs->plates[p], array_idx)) {

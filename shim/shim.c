@@ -4,11 +4,13 @@
 #include "shim_log.h"
 #include "log/log.h"
 #include "multiarray/multiarray.h"
+#include "util/prelude.h"
 #include "writer.h"
 #include "zarr/store.h"
 #include "zarr/store_fs.h"
 #include "zarr/zarr_group.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -41,6 +43,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
         return NULL;
     }
 
+    CHECK(fail, settings->max_threads <= (unsigned)INT_MAX);
     stream->max_threads = (int)settings->max_threads;
 
     // Upper-bound memory estimate (same formula as the pre-create estimator;
@@ -217,11 +220,15 @@ ZarrStream_append(ZarrStream* stream,
         return ZarrStatusCode_InternalError;
     }
 
-    // Find the target array index
+    // Find the target array index. Strict: NULL key only matches when there
+    // is exactly one array (typosafe — a stray key won't silently land in
+    // the sole unnamed array).
     int array_index = -1;
-    if (!key && stream->n_arrays == 1) {
-        array_index = 0;
-    } else if (key) {
+    if (!key) {
+        if (stream->n_arrays == 1) {
+            array_index = 0;
+        }
+    } else {
         for (size_t i = 0; i < stream->n_arrays; ++i) {
             if (stream->arrays[i].key &&
                 strcmp(stream->arrays[i].key, key) == 0) {
@@ -229,16 +236,10 @@ ZarrStream_append(ZarrStream* stream,
                 break;
             }
         }
-        // If key didn't match any named array and there's exactly one with
-        // no key, use that
-        if (array_index < 0 && stream->n_arrays == 1 &&
-            !stream->arrays[0].key) {
-            array_index = 0;
-        }
     }
 
     if (array_index < 0) {
-        return ZarrStatusCode_InvalidArgument;
+        return key ? ZarrStatusCode_KeyNotFound : ZarrStatusCode_InvalidArgument;
     }
 
     // NULL data means "write zeros". Chucky has no fast zero path, so we

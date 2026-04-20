@@ -3,11 +3,13 @@
 #include "acquire.zarr.h"
 #include "chucky_log.h"
 
+#include <stdatomic.h>
+
 #ifndef ACQUIRE_ZARR_API_VERSION
 #define ACQUIRE_ZARR_API_VERSION "0.6.0"
 #endif
 
-static ZarrLogLevel current_log_level = ZarrLogLevel_Info;
+static _Atomic int current_log_level = ZarrLogLevel_Info;
 
 const char*
 Zarr_get_api_version(void)
@@ -21,7 +23,10 @@ Zarr_get_api_version(void)
 void
 shim_apply_log_level(void)
 {
-    switch (current_log_level) {
+    ZarrLogLevel level =
+      (ZarrLogLevel)atomic_load_explicit(&current_log_level,
+                                         memory_order_relaxed);
+    switch (level) {
         case ZarrLogLevel_Debug:
             chucky_log_set_quiet(0);
             chucky_log_set_level(CHUCKY_LOG_DEBUG);
@@ -51,7 +56,7 @@ Zarr_set_log_level(ZarrLogLevel level)
     if (level < 0 || level >= ZarrLogLevelCount) {
         return ZarrStatusCode_InvalidArgument;
     }
-    current_log_level = level;
+    atomic_store_explicit(&current_log_level, (int)level, memory_order_relaxed);
     shim_apply_log_level();
     return ZarrStatusCode_Success;
 }
@@ -59,7 +64,8 @@ Zarr_set_log_level(ZarrLogLevel level)
 ZarrLogLevel
 Zarr_get_log_level(void)
 {
-    return current_log_level;
+    return (ZarrLogLevel)atomic_load_explicit(&current_log_level,
+                                              memory_order_relaxed);
 }
 
 const char*
