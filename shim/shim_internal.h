@@ -8,7 +8,6 @@
 
 struct multiarray_writer;
 struct store;
-struct hcs_plate;
 
 struct shim_array
 {
@@ -24,8 +23,6 @@ struct shim_array
 struct ZarrStream_s
 {
     struct store* store;
-    struct hcs_plate** plates;
-    size_t n_plates;
     struct shim_array* arrays;
     size_t n_arrays;
     multiarray_tile_stream_t* multi_stream;

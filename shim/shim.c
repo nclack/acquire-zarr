@@ -1,172 +1,16 @@
 #include "shim_internal.h"
 #include "shim_array.h"
-#include "shim_hcs_json.h"
+#include "shim_hcs.h"
 #include "shim_log.h"
-#include "shim_util.h"
 #include "log/log.h"
 #include "multiarray/multiarray.h"
 #include "writer.h"
 #include "zarr/store.h"
 #include "zarr/store_fs.h"
 #include "zarr/zarr_group.h"
-#include "hcs.h"
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-
-static int
-create_hcs_arrays(struct ZarrStream_s* stream,
-                  const ZarrStreamSettings* settings,
-                  size_t* array_idx)
-{
-    const ZarrHCSSettings* hcs = settings->hcs_settings;
-
-    stream->n_plates = hcs->plate_count;
-    stream->plates = calloc(hcs->plate_count, sizeof(struct hcs_plate*));
-    if (!stream->plates) {
-        return 0;
-    }
-
-    for (size_t p = 0; p < hcs->plate_count; ++p) {
-        const ZarrHCSPlate* zplate = &hcs->plates[p];
-
-        // Build per-well/per-FOV config for chucky
-        // We need to build one hcs_plate_config per plate
-        // The chucky HCS takes row/col counts, a well_mask, field_count,
-        // and a single fov config. But our new API needs per-well/per-FOV
-        // heterogeneity. Since the current chucky API is uniform, we need
-        // to create the hierarchy ourselves.
-
-        // Write root group (if not already written)
-        zarr_group_write_with_raw_attrs(stream->store, "zarr.json", "{}");
-
-        // Write plate group with attributes
-        const char* plate_path = zplate->path ? zplate->path : "plate";
-        stream->store->mkdirs(stream->store, plate_path);
-
-        // Build plate attributes JSON
-        {
-            size_t attr_cap = 2048 + zplate->well_count * 128 +
-                              zplate->acquisition_count * 256 +
-                              zplate->row_count * 32 +
-                              zplate->column_count * 32;
-            char* attrs = malloc(attr_cap);
-            if (!attrs) {
-                return 0;
-            }
-
-            int alen = shim_hcs_plate_attributes_json(attrs, attr_cap, zplate);
-            if (alen < 0) {
-                free(attrs);
-                return 0;
-            }
-
-            char* key = shim_alloc_printf("%s/zarr.json", plate_path);
-            if (!key) {
-                free(attrs);
-                return 0;
-            }
-            int rc = zarr_group_write_with_raw_attrs(stream->store, key, attrs);
-            free(key);
-            free(attrs);
-            if (rc != 0) {
-                return 0;
-            }
-        }
-
-        // Write row groups, well groups, and create FOV multiscale sinks
-        for (size_t w = 0; w < zplate->well_count; ++w) {
-            const ZarrHCSWell* well = &zplate->wells[w];
-            const char* row_name = well->row_name;
-            const char* col_name = well->column_name;
-
-            // Row group
-            char* row_dir = shim_alloc_printf("%s/%s", plate_path, row_name);
-            if (!row_dir) {
-                return 0;
-            }
-            stream->store->mkdirs(stream->store, row_dir);
-            {
-                char* key = shim_alloc_printf("%s/zarr.json", row_dir);
-                if (!key) {
-                    free(row_dir);
-                    return 0;
-                }
-                zarr_group_write_with_raw_attrs(stream->store, key, "{}");
-                free(key);
-            }
-            free(row_dir);
-
-            // Well group with attributes
-            char* well_dir =
-              shim_alloc_printf("%s/%s/%s", plate_path, row_name, col_name);
-            if (!well_dir) {
-                return 0;
-            }
-            stream->store->mkdirs(stream->store, well_dir);
-            {
-                // Generous cap scaled to image count so writers with many
-                // FOVs per well don't overflow silently. Each image
-                // contributes ~64 bytes of JSON in the worst case.
-                size_t attrs_cap = 512 + well->image_count * 96;
-                char* attrs = malloc(attrs_cap);
-                if (!attrs) {
-                    free(well_dir);
-                    return 0;
-                }
-                int alen =
-                  shim_hcs_well_attributes_json(attrs, attrs_cap, well);
-                if (alen < 0) {
-                    free(attrs);
-                    free(well_dir);
-                    return 0;
-                }
-                char* key = shim_alloc_printf("%s/zarr.json", well_dir);
-                if (!key) {
-                    free(attrs);
-                    free(well_dir);
-                    return 0;
-                }
-                int rc =
-                  zarr_group_write_with_raw_attrs(stream->store, key, attrs);
-                free(key);
-                free(attrs);
-                if (rc != 0) {
-                    free(well_dir);
-                    return 0;
-                }
-            }
-            free(well_dir);
-
-            // Create FOV multiscale sinks
-            for (size_t f = 0; f < well->image_count; ++f) {
-                const ZarrHCSFieldOfView* fov = &well->images[f];
-                const ZarrArraySettings* as = fov->array_settings;
-                struct shim_array* sa = &stream->arrays[*array_idx];
-
-                const char* fov_path = fov->path ? fov->path : "0";
-                sa->key = shim_alloc_printf(
-                  "%s/%s/%s/%s", plate_path, row_name, col_name, fov_path);
-                if (!sa->key) {
-                    return 0;
-                }
-
-                if (!shim_configure_multiscale_array(stream, as, sa)) {
-                    return 0;
-                }
-
-                ++(*array_idx);
-            }
-        }
-
-        // We don't use chucky's hcs_plate_create — we build the hierarchy
-        // ourselves. Set plates[p] = NULL to indicate no cleanup needed.
-        stream->plates[p] = NULL;
-    }
-
-    return 1;
-}
 
 /* --- Stream lifecycle ---------------------------------------------------- */
 
@@ -271,7 +115,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
     // Create HCS arrays
     if (settings->hcs_settings) {
         size_t array_idx = settings->array_count;
-        if (!create_hcs_arrays(stream, settings, &array_idx)) {
+        if (!shim_create_hcs_arrays(stream, settings, &array_idx)) {
             goto fail;
         }
     }
@@ -337,14 +181,6 @@ ZarrStream_destroy(ZarrStream* stream)
             shim_array_destroy(&stream->arrays[i]);
         }
         free(stream->arrays);
-    }
-    if (stream->plates) {
-        for (size_t i = 0; i < stream->n_plates; ++i) {
-            if (stream->plates[i]) {
-                hcs_plate_destroy(stream->plates[i]);
-            }
-        }
-        free(stream->plates);
     }
     if (stream->store) {
         stream->store->destroy(stream->store);
