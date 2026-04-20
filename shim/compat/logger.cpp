@@ -32,7 +32,11 @@ Logger::get_timestamp_()
               1000;
 
     std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &time);
+#else
     localtime_r(&time, &tm);
+#endif
 
     std::ostringstream ss;
     ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0')
