@@ -34,46 +34,62 @@ env:
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
-  run-benchmark:
-    name: Benchmark on ${{ matrix.platform }} (${{ matrix.backend }})
+  # Build the matrix JSON at workflow-start time. Needed because
+  # matrix.* can't be referenced in the job-level if: expression, so
+  # the platform/backend filter has to happen before matrix expansion.
+  matrix-setup:
+    name: Compute matrix
+    runs-on: ubuntu-latest
     # On push to main: always run. On workflow_run: only after a
-    # pull_request-triggered Tests run succeeds (avoids double-running on
-    # main pushes, which the push trigger already handles). On
-    # workflow_dispatch: run the cells matching the optional platform /
-    # backend substring filters (blank = all cells).
+    # pull_request-triggered Tests run succeeds.
     if: |
       github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.platforms == '' || contains(matrix.platform, inputs.platforms)) &&
-       (inputs.backends == '' || contains(matrix.backend, inputs.backends))) ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'pull_request')
+    outputs:
+      include: ${{ steps.build.outputs.include }}
+    steps:
+      - id: build
+        shell: bash
+        env:
+          PLATFORMS_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms || '' }}
+          BACKENDS_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.backends || '' }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          platforms = [
+              ("windows-latest",   "x64-windows-static"),
+              ("ubuntu-latest",    "x64-linux"),
+              ("ubuntu-24.04-arm", "arm64-linux"),
+              ("macos-latest",     "arm64-osx"),
+              ("macos-15-intel",   "x64-osx"),
+          ]
+          backends = ["baseline", "shim"]
+          pf = os.environ.get("PLATFORMS_FILTER", "")
+          bf = os.environ.get("BACKENDS_FILTER", "")
+          include = [
+              {"platform": p, "backend": b, "vcpkg_triplet": tr}
+              for (p, tr) in platforms
+              if not pf or pf in p
+              for b in backends
+              if not bf or bf in b
+          ]
+          print(f"include={json.dumps(include)}")
+          PY
+          cat "$GITHUB_OUTPUT"
+
+  run-benchmark:
+    needs: matrix-setup
+    name: Benchmark on ${{ matrix.platform }} (${{ matrix.backend }})
+    if: needs.matrix-setup.outputs.include != '[]'
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - "windows-latest"
-          - "ubuntu-latest"
-          - "ubuntu-24.04-arm"
-          - "macos-latest" # arm
-          - "macos-15-intel" # x86_64
-        backend:
-          - "baseline"
-          - "shim"
-        include:
-          - platform: "ubuntu-latest"
-            vcpkg_triplet: "x64-linux"
-          - platform: "windows-latest"
-            vcpkg_triplet: "x64-windows-static"
-          - platform: "macos-latest"
-            vcpkg_triplet: "arm64-osx"
-          - platform: "macos-15-intel"
-            vcpkg_triplet: "x64-osx"
-          - platform: "ubuntu-24.04-arm"
-            vcpkg_triplet: "arm64-linux"
+        include: ${{ fromJSON(needs.matrix-setup.outputs.include) }}
     permissions:
       actions: write
 
