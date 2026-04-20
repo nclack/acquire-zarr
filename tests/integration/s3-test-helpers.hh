@@ -16,6 +16,11 @@
 
 #include <cstdio>
 
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 namespace s3 {
 
 namespace detail {
