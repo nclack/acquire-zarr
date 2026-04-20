@@ -10,20 +10,22 @@ set(tests
         stream-compressed-to-s3
         stream-multi-frame-append
         stream-multiscale-trivial-3rd-dim
+        stream-2d-multiscale-to-filesystem
+        stream-3d-multiscale-to-filesystem
+        stream-multiple-arrays-to-filesystem
         estimate-memory-usage
         stream-pure-hcs-acquisition
         stream-mixed-flat-and-hcs-acquisition
         stream-with-ragged-final-shard
         stream-append-nullptr
         stream-throws-on-overflow
-        # Disabled against baseline — shape assertions were updated to match
-        # chucky's LOD geometry (shim/plan.md divergence #1) and so cannot
-        # pass against the baseline library. Still exercised by the shim via
-        # shim/CMakeLists.txt.
-        #   stream-2d-multiscale-to-filesystem
-        #   stream-3d-multiscale-to-filesystem
-        #   stream-multiple-arrays-to-filesystem
 )
+
+# The three multiscale tests above use baseline acquire-zarr's LOD geometry.
+# The shim (chucky) uses different LOD rules (constant chunks across
+# levels, iterative halving with chunk-size clamping); see
+# shim/plan.md divergence #1. The shim CMakeLists overrides those three
+# test source files with chucky-flavoured copies at shim/tests/integration/.
 
 foreach (name ${tests})
     set(tgt "${project}-${name}")

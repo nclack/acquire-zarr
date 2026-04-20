@@ -115,10 +115,12 @@ Integration tests `stream-2d-multiscale`, `stream-3d-multiscale`,
 `stream-multiple-arrays-to-filesystem` were updated to expect this behavior.
 Three of those — `stream-2d-multiscale-to-filesystem`,
 `stream-3d-multiscale-to-filesystem`, and
-`stream-multiple-arrays-to-filesystem` — cannot pass against the baseline
-library and are therefore **disabled in `tests/integration/CMakeLists.txt`**
-(commented out with a pointer to this divergence). They are still exercised
-by the shim via `shim/CMakeLists.txt`.
+`stream-multiple-arrays-to-filesystem` — are **dual-maintained**: the
+baseline expectations live at `tests/integration/<name>.cpp` (run by the
+baseline CI) and the chucky-LOD expectations live at
+`shim/tests/integration/<name>.cpp` (run by the shim CI). Cross-reference
+banners at the top of each file point at the sibling. Keep non-LOD changes
+mirrored between the two copies.
 
 ### 2. Multiarray epoch-boundary constraint
 
@@ -223,11 +225,17 @@ shim/
   docker-compose.yml      # MinIO + test service
   README.md               # build/test docs
   plan.md                 # this file
-  shim.c                  # API functions + HCS metadata + intermediate group helpers
+  shim.c                  # ZarrStream lifecycle + append
+  shim_array.h/.c         # flat + multiscale array creation
   shim_backend.h          # preprocessor dispatch — CPU vs GPU backend names
-  shim_internal.h         # ZarrStream_s, shim_array (with store/plates)
   shim_convert.h/.c       # type conversion (dims, ngff_axes, codec, dtype)
+  shim_hcs.h/.c           # HCS plate/well/FOV orchestration
+  shim_hcs_json.h/.c      # OME/NGFF plate + well attribute JSON builders
+  shim_internal.h         # ZarrStream_s, shim_array layout
+  shim_log.h/.c           # Zarr_get_api_version, Zarr_*_log_level, status msgs
+  shim_settings.h/.c      # ZarrStreamSettings_* / HCS settings allocators + queries
   shim_sink.h/.c          # discriminated union sink (ARRAY + MULTISCALE + NONE)
+  shim_util.h/.c          # alloc_printf + intermediate group writer
   pybind/
     CMakeLists.txt          # pybind11 module linked against selected backend
   python/
@@ -238,5 +246,6 @@ shim/
     setup.py                # CMake-driven GPU wheel build
   compat/
     logger.hh/.cpp/.types.h  # C++ logger for test macro compat
+  tests/integration/      # shim-flavoured copies of multiscale tests
   chucky/                 # submodule
 ```

@@ -1,6 +1,6 @@
-// BASELINE — acquire-zarr LOD geometry expectations.
-// See shim/tests/integration/stream-multiple-arrays-to-filesystem.cpp for the
-// chucky-flavoured version. Divergence documented in shim/plan.md #1.
+// SHIM OVERRIDE — chucky LOD geometry expectations.
+// See tests/integration/stream-multiple-arrays-to-filesystem.cpp for the
+// baseline version. Divergence documented in shim/plan.md #1.
 #include "acquire.zarr.h"
 #include "test.macros.hh"
 
@@ -805,11 +805,11 @@ verify_array1_lod2_metadata(const nlohmann::json& metadata)
     auto fill_value = metadata["fill_value"].get<int>();
     EXPECT(fill_value == 0, "Expected fill_value to be 0, got ", fill_value);
 
-    verify_shape(metadata, { 10, 3, 12, 16 });
+    verify_shape(metadata, { 10, 3, 16, 16 });
     verify_dimension_names(metadata, { "t", "z", "y", "x" });
-    verify_chunk_grid(metadata, { 5, 3, 12, 16 });
+    verify_chunk_grid(metadata, { 5, 3, 16, 16 });
     verify_chunk_key_encoding(metadata);
-    verify_codecs(metadata, { 5, 3, 12, 16 }, false);
+    verify_codecs(metadata, { 5, 3, 16, 16 }, false);
 }
 
 void

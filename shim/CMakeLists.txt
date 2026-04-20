@@ -138,11 +138,23 @@ if(nlohmann_json_FOUND)
         stream-throws-on-overflow
     )
 
+    # These tests have chucky-specific LOD expectations (see shim/plan.md #1).
+    # We carry shim-flavoured copies at shim/tests/integration/ and source
+    # them instead of the baseline versions at tests/integration/.
+    set(shim_override_tests
+        stream-2d-multiscale-to-filesystem
+        stream-3d-multiscale-to-filesystem
+        stream-multiple-arrays-to-filesystem
+    )
+
     foreach(name ${integration_tests})
         set(tgt "shim-test-${name}")
-        add_executable(${tgt}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../tests/integration/${name}.cpp
-        )
+        if(name IN_LIST shim_override_tests)
+            set(src "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/${name}.cpp")
+        else()
+            set(src "${CMAKE_CURRENT_SOURCE_DIR}/../tests/integration/${name}.cpp")
+        endif()
+        add_executable(${tgt} ${src})
         target_compile_definitions(${tgt} PRIVATE
             "TEST=\"${tgt}\""
             S3_TEST_HELPERS_USE_AWS_CLI
