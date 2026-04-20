@@ -219,7 +219,7 @@ jobs:
   test-python-tier1:
     name: Test Python
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 40
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -279,7 +279,7 @@ jobs:
     name: Test Python
     needs: test-python-tier1
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 40
+    timeout-minutes: 25
     strategy:
       fail-fast: true
       matrix:
