@@ -1,5 +1,6 @@
 #include "shim_internal.h"
-#include "shim_convert.h"
+#include "shim_array.h"
+#include "shim_hcs_json.h"
 #include "shim_log.h"
 #include "shim_util.h"
 #include "log/log.h"
@@ -9,183 +10,10 @@
 #include "zarr/store_fs.h"
 #include "zarr/zarr_group.h"
 #include "hcs.h"
-#include "zarr/json_writer.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
-// Forward declarations for HCS metadata helpers
-static int
-find_row_index(const ZarrHCSPlate* plate, const char* name);
-static int
-find_col_index(const ZarrHCSPlate* plate, const char* name);
-static int
-shim_hcs_plate_attributes_json(char* buf,
-                               size_t cap,
-                               const ZarrHCSPlate* plate);
-static int
-shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well);
-
-// Configure `sa` as a multiscale array: builds dims/axes, creates the
-// ngff_multiscale sink under `sa->key`, and fills the tile_stream config.
-// `sa->key` must be set by the caller (NULL == root). Returns 1 on success,
-// 0 on failure; partial state is cleaned up by the caller via
-// shim_array_destroy.
-static int
-configure_multiscale_array(struct ZarrStream_s* stream,
-                           const ZarrArraySettings* as,
-                           struct shim_array* sa)
-{
-    sa->rank = (uint8_t)as->dimension_count;
-    sa->dims = shim_convert_dimensions(
-      as->dimensions, as->dimension_count, as->storage_dimension_order, true);
-    if (!sa->dims) {
-        return 0;
-    }
-
-    sa->axes = shim_convert_ngff_axes(as->dimensions, as->dimension_count);
-    if (!sa->axes) {
-        return 0;
-    }
-
-    enum dtype dt = shim_convert_dtype(as->data_type);
-    struct codec_config codec = shim_convert_codec(as->compression_settings);
-
-    size_t ndims = as->dimension_count;
-    sa->frame_bytes = dtype_bpe(dt) * as->dimensions[ndims - 2].array_size_px *
-                      as->dimensions[ndims - 1].array_size_px;
-
-    struct ngff_multiscale_config ms_cfg = {
-        .data_type = dt,
-        .fill_value = 0.0,
-        .rank = sa->rank,
-        .dimensions = sa->dims,
-        .nlod = 0,
-        .codec = codec,
-        .axes = sa->axes,
-    };
-    sa->sink.kind = SHIM_SINK_MULTISCALE;
-    sa->sink.multiscale =
-      ngff_multiscale_create(stream->store, sa->key, &ms_cfg);
-    if (!sa->sink.multiscale) {
-        return 0;
-    }
-
-    sa->config = (struct tile_stream_configuration){
-        .buffer_capacity_bytes = sa->frame_bytes,
-        .dtype = dt,
-        .rank = sa->rank,
-        .dimensions = sa->dims,
-        .codec = codec,
-        .reduce_method = shim_convert_reduce_method(as->downsampling_method),
-        .append_reduce_method =
-          shim_convert_reduce_method(as->downsampling_method),
-        .epochs_per_batch = 0,
-        .target_batch_chunks = 0,
-        .metadata_update_interval_s = 1.0f,
-        .max_threads = stream->max_threads,
-    };
-
-    return 1;
-}
-
-static int
-create_flat_array(struct ZarrStream_s* stream,
-                  const ZarrArraySettings* as,
-                  struct shim_array* sa)
-{
-    if (as->output_key) {
-        sa->key = strdup(as->output_key);
-        if (!sa->key) {
-            return 0;
-        }
-    }
-
-    if (as->multiscale) {
-        return configure_multiscale_array(stream, as, sa);
-    }
-
-    sa->rank = (uint8_t)as->dimension_count;
-    sa->dims = shim_convert_dimensions(
-      as->dimensions, as->dimension_count, as->storage_dimension_order, false);
-    if (!sa->dims) {
-        return 0;
-    }
-
-    enum dtype dt = shim_convert_dtype(as->data_type);
-    struct codec_config codec = shim_convert_codec(as->compression_settings);
-
-    size_t ndims = as->dimension_count;
-    sa->frame_bytes = dtype_bpe(dt) * as->dimensions[ndims - 2].array_size_px *
-                      as->dimensions[ndims - 1].array_size_px;
-
-    struct zarr_array_config arr_cfg = {
-        .data_type = dt,
-        .fill_value = 0.0,
-        .rank = sa->rank,
-        .dimensions = sa->dims,
-        .codec = codec,
-    };
-
-    // Write intermediate group zarr.json for each path component and ensure
-    // the leaf directory exists for zarr_array_create.
-    if (shim_write_intermediate_groups(stream->store, sa->key) != 0) {
-        return 0;
-    }
-    if (sa->key && stream->store->mkdirs(stream->store, sa->key) != 0) {
-        log_error("mkdirs failed for array directory '%s'", sa->key);
-        return 0;
-    }
-
-    sa->sink.kind = SHIM_SINK_ARRAY;
-    sa->sink.array = zarr_array_create(stream->store, sa->key, &arr_cfg);
-    if (!sa->sink.array) {
-        return 0;
-    }
-
-    sa->config = (struct tile_stream_configuration){
-        .buffer_capacity_bytes = sa->frame_bytes,
-        .dtype = dt,
-        .rank = sa->rank,
-        .dimensions = sa->dims,
-        .codec = codec,
-        .reduce_method = shim_convert_reduce_method(as->downsampling_method),
-        .append_reduce_method =
-          shim_convert_reduce_method(as->downsampling_method),
-        .epochs_per_batch = 0,
-        .target_batch_chunks = 0,
-        .metadata_update_interval_s = 1.0f,
-        .max_threads = stream->max_threads,
-    };
-
-    return 1;
-}
-
-// Find the row index for a name in the plate's row_names array
-static int
-find_row_index(const ZarrHCSPlate* plate, const char* name)
-{
-    for (size_t i = 0; i < plate->row_count; ++i) {
-        if (plate->row_names[i] && strcmp(plate->row_names[i], name) == 0) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-// Find the column index for a name in the plate's column_names array
-static int
-find_col_index(const ZarrHCSPlate* plate, const char* name)
-{
-    for (size_t i = 0; i < plate->column_count; ++i) {
-        if (plate->column_names[i] &&
-            strcmp(plate->column_names[i], name) == 0) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
 
 static int
 create_hcs_arrays(struct ZarrStream_s* stream,
@@ -324,7 +152,7 @@ create_hcs_arrays(struct ZarrStream_s* stream,
                     return 0;
                 }
 
-                if (!configure_multiscale_array(stream, as, sa)) {
+                if (!shim_configure_multiscale_array(stream, as, sa)) {
                     return 0;
                 }
 
@@ -340,211 +168,8 @@ create_hcs_arrays(struct ZarrStream_s* stream,
     return 1;
 }
 
-/* --- HCS metadata JSON helpers ------------------------------------------ */
-
-static int
-shim_hcs_plate_attributes_json(char* buf, size_t cap, const ZarrHCSPlate* plate)
-{
-    struct json_writer jw;
-    jw_init(&jw, buf, cap);
-
-    jw_object_begin(&jw); // attributes root
-
-    jw_key(&jw, "ome");
-    jw_object_begin(&jw);
-    jw_key(&jw, "version");
-    jw_string(&jw, "0.5");
-
-    jw_key(&jw, "plate");
-    jw_object_begin(&jw);
-    jw_key(&jw, "name");
-    jw_string(&jw, plate->name ? plate->name : "plate");
-
-    jw_key(&jw, "version");
-    jw_string(&jw, "0.5");
-
-    // field_count = max FOV count across all wells
-    int field_count = 0;
-    for (size_t w = 0; w < plate->well_count; ++w) {
-        int n = (int)plate->wells[w].image_count;
-        if (n > field_count) {
-            field_count = n;
-        }
-    }
-    jw_key(&jw, "field_count");
-    jw_int(&jw, field_count);
-
-    // acquisitions
-    jw_key(&jw, "acquisitions");
-    jw_array_begin(&jw);
-    if (plate->acquisition_count > 0) {
-        for (size_t a = 0; a < plate->acquisition_count; ++a) {
-            const ZarrHCSAcquisition* acq = &plate->acquisitions[a];
-
-            // Compute maximumfieldcount for this acquisition:
-            // count how many FOVs reference this acquisition across all wells
-            int max_fov_count = 0;
-            for (size_t w = 0; w < plate->well_count; ++w) {
-                const ZarrHCSWell* well = &plate->wells[w];
-                int count = 0;
-                for (size_t f = 0; f < well->image_count; ++f) {
-                    if (well->images[f].has_acquisition_id &&
-                        well->images[f].acquisition_id == acq->id) {
-                        ++count;
-                    }
-                }
-                if (count > max_fov_count) {
-                    max_fov_count = count;
-                }
-            }
-
-            jw_object_begin(&jw);
-            jw_key(&jw, "id");
-            jw_int(&jw, (int64_t)acq->id);
-            jw_key(&jw, "maximumfieldcount");
-            jw_int(&jw, max_fov_count);
-            if (acq->name) {
-                jw_key(&jw, "name");
-                jw_string(&jw, acq->name);
-            }
-            if (acq->has_start_time) {
-                jw_key(&jw, "starttime");
-                jw_uint(&jw, acq->start_time);
-            }
-            if (acq->has_end_time) {
-                jw_key(&jw, "endtime");
-                jw_uint(&jw, acq->end_time);
-            }
-            jw_object_end(&jw);
-        }
-    } else {
-        // Single default acquisition
-        jw_object_begin(&jw);
-        jw_key(&jw, "id");
-        jw_int(&jw, 0);
-        jw_object_end(&jw);
-    }
-    jw_array_end(&jw);
-
-    // columns
-    jw_key(&jw, "columns");
-    jw_array_begin(&jw);
-    for (size_t c = 0; c < plate->column_count; ++c) {
-        jw_object_begin(&jw);
-        jw_key(&jw, "name");
-        jw_string(&jw, plate->column_names[c]);
-        jw_object_end(&jw);
-    }
-    jw_array_end(&jw);
-
-    // rows
-    jw_key(&jw, "rows");
-    jw_array_begin(&jw);
-    for (size_t r = 0; r < plate->row_count; ++r) {
-        jw_object_begin(&jw);
-        jw_key(&jw, "name");
-        jw_string(&jw, plate->row_names[r]);
-        jw_object_end(&jw);
-    }
-    jw_array_end(&jw);
-
-    // wells
-    jw_key(&jw, "wells");
-    jw_array_begin(&jw);
-    for (size_t w = 0; w < plate->well_count; ++w) {
-        const ZarrHCSWell* well = &plate->wells[w];
-        int row_idx = find_row_index(plate, well->row_name);
-        int col_idx = find_col_index(plate, well->column_name);
-
-        jw_object_begin(&jw);
-        jw_key(&jw, "path");
-        char* path = shim_alloc_printf("%s/%s", well->row_name, well->column_name);
-        if (!path) {
-            return -1;
-        }
-        jw_string(&jw, path);
-        free(path);
-        jw_key(&jw, "rowIndex");
-        jw_int(&jw, row_idx);
-        jw_key(&jw, "columnIndex");
-        jw_int(&jw, col_idx);
-        jw_object_end(&jw);
-    }
-    jw_array_end(&jw);
-
-    jw_object_end(&jw); // plate
-    jw_object_end(&jw); // ome
-    jw_object_end(&jw); // attributes root
-
-    if (jw_error(&jw)) {
-        return -1;
-    }
-    return (int)jw_length(&jw);
-}
-
-static int
-shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well)
-{
-    struct json_writer jw;
-    jw_init(&jw, buf, cap);
-
-    jw_object_begin(&jw); // attributes root
-
-    jw_key(&jw, "ome");
-    jw_object_begin(&jw);
-    jw_key(&jw, "version");
-    jw_string(&jw, "0.5");
-
-    jw_key(&jw, "well");
-    jw_object_begin(&jw);
-
-    jw_key(&jw, "version");
-    jw_string(&jw, "0.5");
-
-    jw_key(&jw, "images");
-    jw_array_begin(&jw);
-    for (size_t f = 0; f < well->image_count; ++f) {
-        const ZarrHCSFieldOfView* fov = &well->images[f];
-        jw_object_begin(&jw);
-        jw_key(&jw, "acquisition");
-        if (fov->has_acquisition_id) {
-            jw_int(&jw, (int64_t)fov->acquisition_id);
-        } else {
-            jw_int(&jw, 0);
-        }
-        jw_key(&jw, "path");
-        jw_string(&jw, fov->path ? fov->path : "0");
-        jw_object_end(&jw);
-    }
-    jw_array_end(&jw);
-
-    jw_object_end(&jw); // well
-    jw_object_end(&jw); // ome
-    jw_object_end(&jw); // attributes root
-
-    if (jw_error(&jw)) {
-        return -1;
-    }
-    return (int)jw_length(&jw);
-}
-
 /* --- Stream lifecycle ---------------------------------------------------- */
 
-static void
-shim_array_destroy(struct shim_array* a)
-{
-    if (!a) {
-        return;
-    }
-    shim_sink_flush(&a->sink);
-    shim_sink_destroy(&a->sink);
-    free(a->dims);
-    a->dims = NULL;
-    free(a->axes);
-    a->axes = NULL;
-    free(a->key);
-    a->key = NULL;
-}
 
 ZarrStream*
 ZarrStream_create(ZarrStreamSettings* settings)
@@ -637,7 +262,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
 
     // Create flat arrays
     for (size_t i = 0; i < settings->array_count; ++i) {
-        if (!create_flat_array(
+        if (!shim_create_flat_array(
               stream, &settings->arrays[i], &stream->arrays[i])) {
             goto fail;
         }
