@@ -13,20 +13,24 @@ include(CTest)
 # which breaks when it's a subdirectory. Prepend the correct path here.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/chucky/cmake")
 
-# Apple's clang needs explicit hints to find Homebrew's keg-only libomp.
-# Chucky's enable_openmp() applies OpenMP_C_FLAGS via target_compile_options,
-# which treats a space-separated string as one token — so pass as a list.
+# Apple's clang doesn't find Homebrew's keg-only libomp automatically —
+# pre-seed the FindOpenMP hints when it's installed there. Skip when a
+# conda/micromamba env is active (llvm-openmp is picked up via
+# CMAKE_PREFIX_PATH=$CONDA_PREFIX).
 if(APPLE)
     if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
-        set(LIBOMP_PATH "/opt/homebrew/opt/libomp")
+        set(_brew_libomp "/opt/homebrew/opt/libomp")
     else()
-        set(LIBOMP_PATH "/usr/local/opt/libomp")
+        set(_brew_libomp "/usr/local/opt/libomp")
     endif()
-    set(OpenMP_C_FLAGS "-Xclang;-fopenmp;-I${LIBOMP_PATH}/include")
-    set(OpenMP_CXX_FLAGS "-Xclang;-fopenmp;-I${LIBOMP_PATH}/include")
-    set(OpenMP_C_LIB_NAMES "omp")
-    set(OpenMP_CXX_LIB_NAMES "omp")
-    set(OpenMP_omp_LIBRARY "${LIBOMP_PATH}/lib/libomp.a")
+    if(EXISTS "${_brew_libomp}/include/omp.h"
+       AND NOT DEFINED ENV{CONDA_PREFIX})
+        set(OpenMP_C_FLAGS "-Xclang;-fopenmp;-I${_brew_libomp}/include")
+        set(OpenMP_CXX_FLAGS "-Xclang;-fopenmp;-I${_brew_libomp}/include")
+        set(OpenMP_C_LIB_NAMES "omp")
+        set(OpenMP_CXX_LIB_NAMES "omp")
+        set(OpenMP_omp_LIBRARY "${_brew_libomp}/lib/libomp.a")
+    endif()
 endif()
 
 add_subdirectory(chucky)

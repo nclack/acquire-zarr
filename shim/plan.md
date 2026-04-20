@@ -1,6 +1,6 @@
 # Shim Implementation Plan
 
-## Current State (2026-04-18)
+## Current State (2026-04-20)
 
 All 17 integration tests passing (all original acquire-zarr tests ported):
 - `stream-raw-to-filesystem` — PASS
@@ -47,12 +47,11 @@ is how production acquisitions should configure chunks.
 On main, including GPU multiarray writer (#81), shared-LOD split (#82),
 CPU multiarray heap-overflow fixes (#83), the public log header (#87),
 the `zarr_write_attribute` API (#88), `store_has_existing_data` (#89),
-idempotent multiarray flush (#91), and the explicit stream commit
-point (#92). The two local fixes previously listed here have been
-upstreamed.
-
-#88 and #89 add the primitives needed to close divergences #5 and #6
-respectively; wiring on the shim side is still pending (see Remaining Work).
+idempotent multiarray flush (#91), the explicit stream commit point
+(#92), the zarr.json write-length clamp (#96/#100, fixes the Windows
+UTF-8 decode error), and macOS/Darwin platform support (#99, fixes the
+Apple-clang OpenMP wiring). The two local fixes previously listed here
+have been upstreamed.
 
 ## Architecture
 
@@ -136,56 +135,25 @@ Baseline had independent per-array streams and allowed arbitrary interleaved
 partial writes. HCS tests updated: `y_chunk=240` / `x_chunk=320` over
 `480×640` frames (4 chunks = 1 epoch = 1 frame).
 
-### 3. `settings->max_threads` — wired
-
-Forwarded to `tile_stream_configuration.max_threads` for every array config
-(flat + HCS). 0 means "auto" on both sides (chucky uses
-`omp_get_max_threads()`).
-
-### 4. `ZarrStream_get_current_memory_usage` — upper-bound estimate
+### 3. `ZarrStream_get_current_memory_usage` — upper-bound estimate
 
 Returns a value set once at stream create time from
 `ZarrStreamSettings_estimate_max_memory_usage` (extended to walk HCS FOVs
 as well as flat arrays). This is an upper bound, not runtime-tracked
 usage, since chucky allocates pools once at create and they don't grow.
 
-### 5. `ZarrStream_write_custom_metadata` — primitive ready, shim wiring pending
+### 4. `settings->overwrite` — wired
 
-Still returns `ZarrStatusCode_NotYetImplemented`. Chucky now exposes
-`zarr_write_attribute` (#88), which is the primitive the shim needs to
-write JSON under a given `<array_key>/zarr.json`'s `attributes` with a
-caller-chosen inner key (`ome` is reserved). This is per-array (array_key
-selects the target; NULL means the root). Wire from `shim.c`.
+`ZarrStream_create` calls `store_has_existing_data` (#89) immediately
+after opening the store. When `settings->overwrite` is false and the
+store reports existing data, create fails (logged as "refusing to
+overwrite"). A negative return from `store_has_existing_data` (HEAD
+failure) also aborts — don't silently treat transient errors as
+"absent". Works for both filesystem and S3 backends. Baseline's stricter
+"scan and remove" on overwrite=true isn't required since chucky clobbers
+per-shard.
 
-### 6. `settings->overwrite` — primitive ready, shim wiring pending
-
-Chucky is overwrite-by-default — individual shard writes replace existing
-files in place — so the functional behavior when `overwrite=true` works
-today. The missing piece is the **`overwrite=false` guard**: refuse with
-`ZarrStatusCode_WillNotOverwrite` if the store already has data.
-
-Chucky now exposes `store_has_existing_data` (#89) — an O(1) existence
-check against the store's root metadata key that works for both filesystem
-and S3 backends. Wire from `shim.c` at stream-create time and return
-`WillNotOverwrite` when the guard trips. Baseline's stricter "scan and
-remove" on overwrite=true isn't required since chucky clobbers per-shard.
-
-### 7. No frame queue (intentional)
-
-Writes flow synchronously through chucky's pipeline; no 1 GiB buffered
-frame queue like baseline. For GPU this will be partially replaced by
-chucky's own h2d accumulation buffer (TBD how that shows up in memory
-estimates). The `estimate-memory-usage` test was rewritten to check
-relational properties (compressed > uncompressed, multiscale > single-scale)
-rather than exact bytes.
-
-### 8. Stock LZ4 codec removed (upstream, not shim-specific)
-
-`ZarrCompressor_Lz4` / `ZarrCompressionCodec_Lz4` and the
-`stream-lz4-compressed-to-filesystem` test were removed in acquire-zarr
-c2be1a6 on main. Blosc-LZ4 is still supported.
-
-### 9. Logging wired to chucky's public API
+### 5. Logging wired to chucky's public API
 
 C API `Zarr_set_log_level` forwards to `chucky_log_set_level` /
 `chucky_log_set_quiet` (gates chucky's stderr sink).
@@ -208,32 +176,30 @@ events reach Python on both normal and exception-propagating return
 paths. Overflow drops oldest silently and reports a count as a
 `warning`. See `python/acquire-zarr-py.cpp`.
 
+## CI (shim tests)
+
+`test-shim.yml` runs three jobs:
+- **linux**: `docker compose run --rm test` — builds the Docker image
+  and runs the full `ctest -L shim` suite with minio for S3. This is
+  the only place S3 tests run.
+- **macos** (macos-latest, arm): native build via micromamba
+  (`mamba-org/setup-micromamba@v2`) using the conda-forge packages
+  `aws-c-s3 blosc lz4-c zstd llvm-openmp snappy zlib nlohmann_json`.
+  Runs `ctest -L shim -LE s3` (S3 skipped; covered by the linux job).
+- **windows** (windows-latest): same micromamba pattern + MSVC
+  (`ilammy/msvc-dev-cmd@v1`, arch x64); points `CMAKE_PREFIX_PATH` at
+  `$CONDA_PREFIX/Library`. Also runs `ctest -L shim -LE s3`.
+
+The macos/windows jobs mirror chucky's own `ci.yml` pattern so the two
+repos stay in sync on platform support.
+
+Note on OpenMP: `shim/CMakeLists.txt` still pre-seeds `FindOpenMP`
+variables for Homebrew's keg-only libomp (needed by the benchmark
+workflow which `brew install libomp`s). The block is guarded by
+`EXISTS ${brew_path} AND NOT DEFINED ENV{CONDA_PREFIX}` so it doesn't
+fight with conda's `llvm-openmp`.
+
 ## Remaining Work
-
-### Known issues (triage separately)
-
-- **Windows shim benchmark**: `zarr.open(az_path)` on a shim-written zarr
-  fails with `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80 in
-  position 599` reading `zarr.json`. Ubuntu + ARM writes produce a
-  zarr-python-readable store on the same run. Excluded via matrix
-  `exclude:` in `.github/workflows/benchmark.yml`. Likely a
-  Windows-specific `zarr.json` write path issue in chucky's `store_fs` or
-  `zarr_metadata` module.
-- **macOS shim benchmark** (both arm + intel): FindOpenMP + chucky's
-  `enable_openmp()` don't cooperate on Apple clang when the shim wheel is
-  built standalone. Tried space-string then list form for
-  `OpenMP_C_FLAGS`; both produce a miscomposed compile command
-  (`-Xclang -MD`, `-MF ... unused`). Baseline path works because
-  `OpenMP::OpenMP_C` is used directly in the baseline build. Excluded via
-  matrix `exclude:`.
-- **Windows test-order interaction**: in the default collection order the
-  whole suite took ~25 min with a 10-min gap around
-  `test_append_throws_on_overflow`. Randomizing test order via
-  `pytest-randomly` drops total runtime to ~15 min with
-  `test_anisotropic_downsampling` (83s) as the slowest test and no 10-min
-  gap anywhere — so the slowness was ordering-dependent, not intrinsic.
-  `pytest-randomly` is now installed in CI; prints a seed on each run for
-  reproducibility. Root ordering-sensitivity is still a loose end.
 
 ### Nice-to-haves
 
@@ -242,39 +208,11 @@ paths. Overflow drops oldest silently and reports a count as a
   `docker compose` via `shim/Dockerfile.gpu`, or native via chucky's inner
   nix flake (nvcc 12.9).
 
-## CI
-
-- `.github/workflows/test-shim.yml` — runs `docker compose run --rm test`,
-  which brings up minio alongside the test container and invokes
-  `ctest -L shim`. Triggers: push to `main`, PRs to `main`. No GPU tests
-  yet. BuildKit GHA layer cache reuses from-source aws-c-* / lz4 / zstd /
-  blosc layers across runs.
-- `.github/workflows/wheels.yml` — parallel `cpu-wheel` and `gpu-wheel`
-  jobs build the Dockerfiles and upload `.whl` artifacts. Triggers: push
-  to `main`, push to `shim`, manual `workflow_dispatch`. No publishing.
-- `python/acquire-zarr-py.cpp` gates its chucky log callback behind
-  `#ifdef ACQUIRE_ZARR_WITH_CHUCKY_LOG`, which only
-  `shim/pybind/CMakeLists.txt` defines — so the baseline `build.yml` /
-  `benchmark.yml` / `release.yml` pipelines that compile the shared
-  pybind source without chucky still work.
-- `tests/integration/s3-test-helpers.hh` has two backends selected by
-  `-DS3_TEST_HELPERS_USE_AWS_CLI`: miniocpp (default, used by the
-  baseline vcpkg build on all platforms incl. Windows) and `aws` CLI via
-  `popen` (used by the shim Linux-docker build, which avoids vcpkg).
-- Python test job (`test-python` in `test.yml`) runs pytest under
-  `pytest-timeout` — `--timeout-method=signal` on POSIX (SIGALRM can
-  preempt C-extension hangs and emit a traceback), `--timeout-method=thread`
-  on Windows (signal method not supported). Job-level
-  `timeout-minutes: 25` caps runaway runners at 25m rather than GitHub's
-  6h default. `test_anisotropic_downsampling` carries an explicit
-  `@pytest.mark.timeout(300)` because it writes ~4 GB and is legitimately
-  slow on Windows.
-
 ## Files
 
 ```
 .github/workflows/
-  test-shim.yml           # docker compose run --rm test (shim ctest via compose)
+  test-shim.yml           # linux (docker+minio) + macos/windows (micromamba)
   wheels.yml              # cpu-wheel + gpu-wheel jobs, upload artifacts
 shim/
   CMakeLists.txt          # builds chucky, shim lib (cpu+gpu), integration tests
