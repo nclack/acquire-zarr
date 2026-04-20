@@ -16,7 +16,18 @@ on:
   # Manual trigger: `gh workflow run benchmark.yml --ref <branch>` runs
   # the benchmark against that branch's head (the default checkout
   # behavior resolves to github.ref when no explicit ref is given).
+  # Pass `-f platforms=<substring>` / `-f backends=<substring>` to
+  # narrow the matrix; defaults to running every cell.
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Substring filter for matrix platforms (e.g. "ubuntu-latest"); blank = all'
+        required: false
+        default: ''
+      backends:
+        description: 'Substring filter for matrix backends ("baseline", "shim"); blank = all'
+        required: false
+        default: ''
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
@@ -27,11 +38,14 @@ jobs:
     name: Benchmark on ${{ matrix.platform }} (${{ matrix.backend }})
     # On push to main: always run. On workflow_run: only after a
     # pull_request-triggered Tests run succeeds (avoids double-running on
-    # main pushes, which the push trigger already handles).
-    # On workflow_dispatch: always run (user asked explicitly).
+    # main pushes, which the push trigger already handles). On
+    # workflow_dispatch: run the cells matching the optional platform /
+    # backend substring filters (blank = all cells).
     if: |
       github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.platforms == '' || contains(matrix.platform, inputs.platforms)) &&
+       (inputs.backends == '' || contains(matrix.backend, inputs.backends))) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'pull_request')
