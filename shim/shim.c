@@ -1,5 +1,6 @@
 #include "shim_internal.h"
 #include "shim_convert.h"
+#include "shim_log.h"
 #include "log/log.h"
 #include "multiarray/multiarray.h"
 #include "writer.h"
@@ -8,24 +9,11 @@
 #include "zarr/zarr_group.h"
 #include "hcs.h"
 #include "zarr/json_writer.h"
-#include "chucky_log.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
-#ifndef ACQUIRE_ZARR_API_VERSION
-#define ACQUIRE_ZARR_API_VERSION "0.6.0"
-#endif
-
-static ZarrLogLevel current_log_level = ZarrLogLevel_Info;
-
-// Ensure chucky's log level matches our stored level. Called from the
-// public setter and at stream create time so that the default applies
-// even when the user never calls Zarr_set_log_level.
-static void
-apply_log_level(void);
 
 // Write intermediate group zarr.json for each path component of key.
 // For key "a/b/c", writes groups at "a/zarr.json" and "a/b/zarr.json".
@@ -49,98 +37,6 @@ shim_hcs_plate_attributes_json(char* buf,
                                const ZarrHCSPlate* plate);
 static int
 shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well);
-
-/* --- Version / status / logging ----------------------------------------- */
-
-const char*
-Zarr_get_api_version(void)
-{
-    return ACQUIRE_ZARR_API_VERSION;
-}
-
-// Forward current_log_level to chucky's log dispatcher. Default chucky level
-// is CHUCKY_LOG_TRACE (0), so without this chucky emits everything to stderr
-// regardless of the acquire-zarr log level.
-static void
-apply_log_level(void)
-{
-    switch (current_log_level) {
-        case ZarrLogLevel_Debug:
-            chucky_log_set_quiet(0);
-            chucky_log_set_level(CHUCKY_LOG_DEBUG);
-            break;
-        case ZarrLogLevel_Info:
-            chucky_log_set_quiet(0);
-            chucky_log_set_level(CHUCKY_LOG_INFO);
-            break;
-        case ZarrLogLevel_Warning:
-            chucky_log_set_quiet(0);
-            chucky_log_set_level(CHUCKY_LOG_WARN);
-            break;
-        case ZarrLogLevel_Error:
-            chucky_log_set_quiet(0);
-            chucky_log_set_level(CHUCKY_LOG_ERROR);
-            break;
-        case ZarrLogLevel_None:
-        default:
-            chucky_log_set_quiet(1);
-            break;
-    }
-}
-
-ZarrStatusCode
-Zarr_set_log_level(ZarrLogLevel level)
-{
-    if (level < 0 || level >= ZarrLogLevelCount) {
-        return ZarrStatusCode_InvalidArgument;
-    }
-    current_log_level = level;
-    apply_log_level();
-    return ZarrStatusCode_Success;
-}
-
-ZarrLogLevel
-Zarr_get_log_level(void)
-{
-    return current_log_level;
-}
-
-const char*
-Zarr_get_status_message(ZarrStatusCode code)
-{
-    switch (code) {
-        case ZarrStatusCode_Success:
-            return "Success";
-        case ZarrStatusCode_InvalidArgument:
-            return "Invalid argument";
-        case ZarrStatusCode_Overflow:
-            return "Buffer overflow";
-        case ZarrStatusCode_InvalidIndex:
-            return "Invalid index";
-        case ZarrStatusCode_NotYetImplemented:
-            return "Not yet implemented";
-        case ZarrStatusCode_InternalError:
-            return "Internal error";
-        case ZarrStatusCode_OutOfMemory:
-            return "Out of memory";
-        case ZarrStatusCode_IOError:
-            return "I/O error";
-        case ZarrStatusCode_CompressionError:
-            return "Error compressing";
-        case ZarrStatusCode_InvalidSettings:
-            return "Invalid settings";
-        case ZarrStatusCode_WillNotOverwrite:
-            return "Refusing to overwrite existing data";
-        case ZarrStatusCode_PartialWrite:
-            return "Data partially written";
-        case ZarrStatusCode_WriteOutOfBounds:
-            return "Attempted write beyond array boundary";
-        case ZarrStatusCode_KeyNotFound:
-            return "Array key not found";
-        default:
-            return "Unknown error";
-    }
-}
 
 /* --- Allocator helpers -------------------------------------------------- */
 
@@ -1223,7 +1119,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
 
     // Make sure chucky's log threshold matches the requested level even if
     // the caller never called Zarr_set_log_level.
-    apply_log_level();
+    shim_apply_log_level();
 
     ZarrStream* stream = calloc(1, sizeof(ZarrStream));
     if (!stream) {
