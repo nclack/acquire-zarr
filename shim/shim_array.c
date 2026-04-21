@@ -77,7 +77,7 @@ shim_configure_multiscale_array(struct ZarrStream_s* stream,
         .append_reduce_method =
           shim_convert_reduce_method(as->downsampling_method),
         .epochs_per_batch = 0,
-        .target_batch_chunks = 0,
+        .target_batch_bytes = 0,
         .metadata_update_interval_s = 1.0f,
         .max_threads = stream->max_threads,
     };
@@ -150,7 +150,7 @@ shim_create_flat_array(struct ZarrStream_s* stream,
         .append_reduce_method =
           shim_convert_reduce_method(as->downsampling_method),
         .epochs_per_batch = 0,
-        .target_batch_chunks = 0,
+        .target_batch_bytes = 0,
         .metadata_update_interval_s = 1.0f,
         .max_threads = stream->max_threads,
     };
