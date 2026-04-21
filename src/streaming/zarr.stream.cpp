@@ -1743,7 +1743,7 @@ ZarrStream_s::finalize_frame_queue_()
     // notify on one of the worker-thread early-exit paths.
     std::unique_lock lock(frame_queue_mutex_);
     if (!frame_queue_finished_cv_.wait_for(
-          lock, std::chrono::seconds(30), [this] {
+          lock, std::chrono::seconds(300), [this] {
               return frame_queue_processing_done_.load() ||
                      frame_queue_->empty();
           })) {
