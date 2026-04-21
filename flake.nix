@@ -32,9 +32,11 @@
             claude-code.packages.${system}.default
             cmake-language-server
             cmake-format
+            just
             gh
             man-pages
             man-pages-posix
+            uv
 
             # Libraries
             lz4

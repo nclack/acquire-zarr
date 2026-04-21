@@ -174,6 +174,10 @@ def run_acquire_zarr_test(
 
 def get_git_commit_hash():
     """Get the current git commit hash, or None if not in a git repo."""
+    env_sha = os.environ.get("BENCH_GIT_SHA")
+    if env_sha:
+        return env_sha
+
     # cache the current working directory
     cwd = os.getcwd()
 

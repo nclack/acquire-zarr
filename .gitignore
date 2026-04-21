@@ -23,6 +23,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build*/
+bench-out/
 cmake-build*/
 _CPack_Packages/
 develop-eggs/
