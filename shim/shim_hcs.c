@@ -6,6 +6,7 @@
 
 #include "log/log.h"
 #include "util/prelude.h"
+#include "util/strbuf.h"
 #include "zarr/store.h"
 #include "zarr/zarr_group.h"
 
@@ -79,28 +80,24 @@ write_plate_group_metadata(struct store* store,
                            const char* plate_path,
                            const ZarrHCSPlate* plate)
 {
-    size_t attr_cap = 2048 + plate->well_count * 128 +
-                      plate->acquisition_count * 256 + plate->row_count * 32 +
-                      plate->column_count * 32;
-    char* attrs = malloc(attr_cap);
+    struct strbuf attrs = { 0 };
     char* key = shim_alloc_printf("%s/zarr.json", plate_path);
     int rc = 1;
-    if (!attrs || !key) {
+    if (!key) {
         goto cleanup;
     }
 
-    int alen = shim_hcs_plate_attributes_json(attrs, attr_cap, plate);
-    if (alen < 0) {
+    if (shim_hcs_plate_attributes_json(&attrs, plate) != 0) {
         goto cleanup;
     }
 
-    if (zarr_group_write_with_raw_attrs(store, key, attrs) != 0) {
+    if (zarr_group_write_with_raw_attrs(store, key, strbuf_cstr(&attrs)) != 0) {
         goto cleanup;
     }
     rc = 0;
 
 cleanup:
-    free(attrs);
+    strbuf_free(&attrs);
     free(key);
     return rc;
 }
@@ -136,29 +133,24 @@ write_well_group_metadata(struct store* store,
                           const char* well_dir,
                           const ZarrHCSWell* well)
 {
-    // Generous cap scaled to image count so writers with many FOVs per
-    // well don't overflow silently. Each image contributes ~64 bytes of
-    // JSON in the worst case.
-    size_t attrs_cap = 512 + well->image_count * 96;
-    char* attrs = malloc(attrs_cap);
+    struct strbuf attrs = { 0 };
     char* key = shim_alloc_printf("%s/zarr.json", well_dir);
     int rc = 1;
-    if (!attrs || !key) {
+    if (!key) {
         goto cleanup;
     }
 
-    int alen = shim_hcs_well_attributes_json(attrs, attrs_cap, well);
-    if (alen < 0) {
+    if (shim_hcs_well_attributes_json(&attrs, well) != 0) {
         goto cleanup;
     }
 
-    if (zarr_group_write_with_raw_attrs(store, key, attrs) != 0) {
+    if (zarr_group_write_with_raw_attrs(store, key, strbuf_cstr(&attrs)) != 0) {
         goto cleanup;
     }
     rc = 0;
 
 cleanup:
-    free(attrs);
+    strbuf_free(&attrs);
     free(key);
     return rc;
 }

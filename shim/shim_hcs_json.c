@@ -31,10 +31,10 @@ find_col_index(const ZarrHCSPlate* plate, const char* name)
 }
 
 int
-shim_hcs_plate_attributes_json(char* buf, size_t cap, const ZarrHCSPlate* plate)
+shim_hcs_plate_attributes_json(struct strbuf* sb, const ZarrHCSPlate* plate)
 {
     struct json_writer jw;
-    jw_init(&jw, buf, cap);
+    jw_init(&jw, sb);
 
     jw_object_begin(&jw); // attributes root
 
@@ -149,7 +149,7 @@ shim_hcs_plate_attributes_json(char* buf, size_t cap, const ZarrHCSPlate* plate)
         char* path =
           shim_alloc_printf("%s/%s", well->row_name, well->column_name);
         if (!path) {
-            return -1;
+            return 1;
         }
         jw_string(&jw, path);
         free(path);
@@ -165,17 +165,14 @@ shim_hcs_plate_attributes_json(char* buf, size_t cap, const ZarrHCSPlate* plate)
     jw_object_end(&jw); // ome
     jw_object_end(&jw); // attributes root
 
-    if (jw_error(&jw)) {
-        return -1;
-    }
-    return (int)jw_length(&jw);
+    return jw_error(&jw) ? 1 : 0;
 }
 
 int
-shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well)
+shim_hcs_well_attributes_json(struct strbuf* sb, const ZarrHCSWell* well)
 {
     struct json_writer jw;
-    jw_init(&jw, buf, cap);
+    jw_init(&jw, sb);
 
     jw_object_begin(&jw); // attributes root
 
@@ -211,8 +208,5 @@ shim_hcs_well_attributes_json(char* buf, size_t cap, const ZarrHCSWell* well)
     jw_object_end(&jw); // ome
     jw_object_end(&jw); // attributes root
 
-    if (jw_error(&jw)) {
-        return -1;
-    }
-    return (int)jw_length(&jw);
+    return jw_error(&jw) ? 1 : 0;
 }
