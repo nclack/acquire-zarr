@@ -67,7 +67,7 @@ def run_tensorstore_test(
     # Define a TensorStore spec for a Zarr v3 store.
     spec = {
         "driver": "zarr3",
-        "kvstore": {"driver": "file", "path": path},
+        "kvstore": {"driver": "file", "path": path, "file_io_sync": True},
         "metadata": metadata,
         "delete_existing": True,
         "create": True,
