@@ -12,6 +12,9 @@ TestResults
 .vs
 .claude
 
+flake.nix
+flake.lock
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
