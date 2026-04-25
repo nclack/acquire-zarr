@@ -67,7 +67,7 @@ ZarrStream_create(ZarrStreamSettings* settings)
         store_s3_config_set_defaults(&s3cfg);
         stream->store = store_s3_create(&s3cfg);
     } else {
-        stream->store = store_fs_create(settings->store_path, 0);
+        stream->store = store_fs_create(settings->store_path, 1);
     }
     if (!stream->store) {
         goto fail;
